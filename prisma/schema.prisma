@@ -24,9 +24,10 @@ model Sale {
   Total          Decimal    @db.Decimal(10, 2)
   CreatedAt      DateTime?  @default(now(), map: "DF__Sales__CreatedAt__5F492382") @db.DateTime
   UpdatedAt      DateTime?  @default(now(), map: "DF__Sales__UpdatedAt__603D47BB") @updatedAt @db.DateTime
-  Status         String?    @default("PENDING", map: "DF__Sales__Status__61316BF4") @db.NVarChar(20)
+  Status         String?    @default("PROCESSING", map: "DF__Sales__Status__61316BF4") @db.NVarChar(20)
   idSaleProvider String     @unique(map: "UQ_Sales_idSaleProvider") @db.NVarChar(100)
   CancelReason   String?    @db.NVarChar(500)
+  secureId       String?    @db.NVarChar(50)
   CartItems      CartItem[]
 
   @@index([Email], map: "IX_Sales_Email")

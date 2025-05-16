@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import swaggerUi from 'swagger-ui-express';
+import { specs } from './config/swagger.js';
 import authRoutes from './routes/auth.routes.js';
 import salesRoutes from './routes/salesRoutes.js';
 import { limiter, helmetConfig, hppProtection } from './middleware/security.middleware.js';
@@ -27,6 +29,17 @@ app.use(compression());
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(validateJson);
+
+// Documentación Swagger
+app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(specs, {
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: "API Turistik - Documentación",
+    swaggerOptions: {
+        persistAuthorization: true,
+        filter: true,
+        displayRequestDuration: true
+    }
+}));
 
 // Debug middleware en desarrollo
 if (process.env.NODE_ENV === 'development') {
@@ -59,7 +72,7 @@ const PORT = process.env.PORT || 2000;
 app.listen(PORT, () => {
   console.log(`Servidor ejecutándose en el puerto ${PORT}`);
   console.log(`Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  console.log('Routes configured:');
+  console.log('Documentación disponible en: /api-docs');
   
   // Auth routes
   console.log('\nAuth routes:');

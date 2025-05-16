@@ -1,7 +1,31 @@
 import { validationResult } from 'express-validator';
 import { PrismaClient } from '@prisma/client';
+import { generateSecureId } from '../utils/idGenerator.js';
+import { transformSaleResponse } from '../utils/transformResponse.js';
 
 const prisma = new PrismaClient();
+
+/**
+ * Busca una venta por idSaleProvider o secureId
+ * @param {string} id - ID de la venta (puede ser idSaleProvider o secureId)
+ * @param {Object} options - Opciones adicionales para la búsqueda
+ * @returns {Promise<Object|null>} Venta encontrada o null
+ */
+const findSaleByAnyId = async (id, options = {}) => {
+  const sale = await prisma.sale.findFirst({
+    where: {
+      OR: [
+        { idSaleProvider: id },
+        { secureId: id }
+      ]
+    },
+    include: {
+      CartItems: true,
+      ...options.include
+    }
+  });
+  return sale;
+};
 
 /**
  * Valida y formatea una hora en formato HH:mm:ss
@@ -10,20 +34,16 @@ const prisma = new PrismaClient();
  */
 const validateAndFormatTime = (timeStr) => {
   if (!timeStr || typeof timeStr !== 'string') {
-    throw new Error('Time must be a string in format HH:mm:ss or HH:mm');
+    throw new Error('La hora debe ser un string en formato HH:MM:SS');
   }
 
-  const timeParts = timeStr.split(':');
-  if (timeParts.length < 2 || timeParts.length > 3) {
-    throw new Error('Invalid time format. Must be HH:mm:ss or HH:mm');
+  // Validar el formato usando regex
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
+  if (!timeRegex.test(timeStr)) {
+    throw new Error('Formato de hora inválido. Debe ser HH:MM:SS (24 horas)');
   }
 
-  // Aseguramos que tenga los segundos
-  if (timeParts.length === 2) {
-    timeParts.push('00');
-  }
-
-  return timeParts.join(':');
+  return timeStr;
 };
 
 /**
@@ -88,17 +108,25 @@ export const createSale = async (req, res) => {
       return res.status(409).json({
         message: 'Ya existe una venta registrada con este ID de proveedor',
         error: 'DUPLICATE_PROVIDER_SALE_ID',
-        saleId: existingSale.Id
+        saleId: existingSale.secureId
+      });
+    }
+
+    // Validar el formato de hora antes de crear la venta
+    let formattedTime;
+    try {
+      formattedTime = validateAndFormatTime(custommer.time || '00:00:00');
+    } catch (timeError) {
+      return res.status(400).json({
+        message: timeError.message,
+        error: 'INVALID_TIME_FORMAT'
       });
     }
 
     // Crear la venta con todos sus items en una sola transacción
     const sale = await prisma.sale.create({
       data: {
-        // Provider info
         ProviderName: provider.name,
-        
-        // Customer info
         Name: custommer.name,
         LastName: custommer.lastName,
         Email: custommer.email,
@@ -107,13 +135,12 @@ export const createSale = async (req, res) => {
         City: custommer.city,
         Language: custommer.idioma,
         Date: new Date(custommer.date),
-        Time: String(custommer.time || '00:00:00'),
+        Time: formattedTime,
         QtyPax: custommer.qtypax,
         Opt: custommer.opt,
         Total: custommer.total,
         idSaleProvider: custommer.idSaleProvider,
-        
-        // Cart items
+        secureId: generateSecureId(new Date(custommer.date)),
         CartItems: {
           create: custommer.itemsCart.map(item => ({
             IdItemEcommerce: item.idItemEcommerce
@@ -127,7 +154,7 @@ export const createSale = async (req, res) => {
 
     return res.status(201).json({
       message: 'Venta creada exitosamente',
-      data: sale
+      data: transformSaleResponse(sale)
     });
   } catch (error) {
     console.error('Error al crear la venta:', error);
@@ -139,18 +166,15 @@ export const createSale = async (req, res) => {
 };
 
 /**
- * Actualiza los datos de una venta usando el ID del proveedor
+ * Actualiza los datos de una venta usando el ID del proveedor o el secureId
  */
 export const updateSale = async (req, res) => {
   try {
-    const { idSaleProvider } = req.params;
+    const { id } = req.params;
     const updateData = req.body;
 
-    // Verificar que la venta existe usando idSaleProvider
-    const existingSale = await prisma.sale.findUnique({
-      where: { idSaleProvider },
-      include: { CartItems: true }
-    });
+    // Verificar que la venta existe usando cualquiera de los IDs
+    const existingSale = await findSaleByAnyId(id);
 
     if (!existingSale) {
       return res.status(404).json({
@@ -167,9 +191,22 @@ export const updateSale = async (req, res) => {
       });
     }
 
+    // Validar el formato de hora antes de intentar actualizar
+    let formattedTime;
+    if (updateData.time) {
+      try {
+        formattedTime = validateAndFormatTime(updateData.time);
+      } catch (timeError) {
+        return res.status(400).json({
+          message: timeError.message,
+          error: 'INVALID_TIME_FORMAT'
+        });
+      }
+    }
+
     // Solo actualizar los campos permitidos
     const updatedSale = await prisma.sale.update({
-      where: { idSaleProvider },
+      where: { Id: existingSale.Id },
       data: {
         Name: updateData.name || undefined,
         LastName: updateData.lastName || undefined,
@@ -179,14 +216,17 @@ export const updateSale = async (req, res) => {
         City: updateData.city || undefined,
         Language: updateData.idioma || undefined,
         Date: updateData.date ? new Date(updateData.date) : undefined,
-        Time: updateData.time || undefined,
+        Time: formattedTime,
         UpdatedAt: new Date()
+      },
+      include: {
+        CartItems: true
       }
     });
 
     return res.json({
       message: 'Venta actualizada exitosamente',
-      data: updatedSale
+      data: transformSaleResponse(updatedSale)
     });
   } catch (error) {
     console.error('Error al actualizar la venta:', error);
@@ -202,7 +242,7 @@ export const updateSale = async (req, res) => {
  */
 export const updatePaxQuantity = async (req, res) => {
   try {
-    const { idSaleProvider } = req.params;
+    const { id } = req.params;
     const { qtypax, reason } = req.body;
 
     if (!qtypax || qtypax < 1) {
@@ -212,11 +252,8 @@ export const updatePaxQuantity = async (req, res) => {
       });
     }
 
-    // Verificar que la venta existe usando IdSaleProvider
-    const sale = await prisma.sale.findUnique({
-      where: { idSaleProvider },
-      include: { CartItems: true }
-    });
+    // Verificar que la venta existe usando cualquiera de los IDs
+    const sale = await findSaleByAnyId(id);
 
     if (!sale) {
       return res.status(404).json({
@@ -265,11 +302,11 @@ export const updatePaxQuantity = async (req, res) => {
 
       // Luego actualizar la venta
       const updated = await prisma.sale.update({
-        where: { idSaleProvider },
+        where: { Id: sale.Id },
         data: {
           QtyPax: newQtyPax,
-          Status: newQtyPax === 0 ? 'CANCELLED' : sale.Status,
-          CancelReason: newQtyPax === 0 ? (reason || 'Cancelación total de pasajeros') : sale.CancelReason,
+          Status: newQtyPax === 0 ? 'CANCELLED' : 'PROCESSING',
+          CancelReason: reason || (newQtyPax === 0 ? 'Cancelación total de pasajeros' : 'Cancelación parcial de pasajeros'),
           UpdatedAt: new Date()
         },
         include: { CartItems: true }
@@ -278,22 +315,9 @@ export const updatePaxQuantity = async (req, res) => {
       return updated;
     });
 
-    // Verificar si todos los items están cancelados para actualizar el estado
-    const remainingActiveItems = updatedSale.CartItems.filter(item => item.Status === 'ACTIVE').length;
-    if (remainingActiveItems === 0 && updatedSale.Status !== 'CANCELLED') {
-      await prisma.sale.update({
-        where: { idSaleProvider },
-        data: {
-          Status: 'CANCELLED',
-          CancelReason: reason || 'Todos los items han sido cancelados',
-          UpdatedAt: new Date()
-        }
-      });
-    }
-
     return res.json({
       message: `Se han cancelado ${qtypax} pasajeros. Quedan ${newQtyPax} pasajeros activos.`,
-      data: updatedSale
+      data: transformSaleResponse(updatedSale)
     });
   } catch (error) {
     console.error('Error al actualizar cantidad de pasajeros:', error);
@@ -309,14 +333,11 @@ export const updatePaxQuantity = async (req, res) => {
  */
 export const cancelFullSale = async (req, res) => {
   try {
-    const { idSaleProvider } = req.params;
+    const { id } = req.params;
     const { reason } = req.body;
 
-    // Verificar que la venta existe usando IdSaleProvider
-    const sale = await prisma.sale.findUnique({
-      where: { idSaleProvider: idSaleProvider },
-      include: { CartItems: true }
-    });
+    // Verificar que la venta existe usando cualquiera de los IDs
+    const sale = await findSaleByAnyId(id);
 
     if (!sale) {
       return res.status(404).json({
@@ -349,7 +370,7 @@ export const cancelFullSale = async (req, res) => {
 
       // Luego cancelar la venta
       const cancelledSale = await prisma.sale.update({
-        where: { idSaleProvider: idSaleProvider },
+        where: { Id: sale.Id },
         data: {
           Status: 'CANCELLED',
           CancelReason: reason || 'No se especificó razón',
@@ -363,7 +384,7 @@ export const cancelFullSale = async (req, res) => {
 
     return res.json({
       message: 'Venta cancelada exitosamente',
-      data: updatedSale
+      data: transformSaleResponse(updatedSale)
     });
   } catch (error) {
     console.error('Error al cancelar la venta:', error);
