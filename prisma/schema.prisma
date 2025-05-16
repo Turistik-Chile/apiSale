@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+model Sale {
+  Id             Int        @id(map: "PK__Sales__3214EC07D68F4402") @default(autoincrement())
+  ProviderName   String     @db.NVarChar(100)
+  Name           String     @db.NVarChar(100)
+  LastName       String     @db.NVarChar(100)
+  Email          String     @db.NVarChar(255)
+  PhoneNumber    String     @db.NVarChar(20)
+  Country        String     @db.NVarChar(2)
+  City           String     @db.NVarChar(100)
+  Language       String     @db.NVarChar(50)
+  Date           DateTime   @db.Date
+  Time           String     @db.VarChar(8)
+  QtyPax         Int
+  Opt            String     @db.NVarChar(100)
+  Total          Decimal    @db.Decimal(10, 2)
+  CreatedAt      DateTime?  @default(now(), map: "DF__Sales__CreatedAt__5F492382") @db.DateTime
+  UpdatedAt      DateTime?  @default(now(), map: "DF__Sales__UpdatedAt__603D47BB") @updatedAt @db.DateTime
+  Status         String?    @default("PENDING", map: "DF__Sales__Status__61316BF4") @db.NVarChar(20)
+  idSaleProvider String     @unique(map: "UQ_Sales_idSaleProvider") @db.NVarChar(100)
+  CancelReason   String?    @db.NVarChar(500)
+  CartItems      CartItem[]
+
+  @@index([Email], map: "IX_Sales_Email")
+  @@index([Status], map: "IX_Sales_Status")
+  @@index([idSaleProvider], map: "IX_Sales_idSaleProvider")
+  @@map("Sales")
+}
+
+model CartItem {
+  Id              Int       @id(map: "PK__CartItem__3214EC072D3F6056") @default(autoincrement())
+  SaleId          Int
+  IdItemEcommerce String    @db.NVarChar(100)
+  CreatedAt       DateTime? @default(now(), map: "DF__CartItems__Creat__59904A2C") @db.DateTime
+  CancelReason    String?   @db.NVarChar(500)
+  Status          String    @default("ACTIVE", map: "DF__CartItems__Statu__640DD89F") @db.NVarChar(20)
+  Sale            Sale      @relation(fields: [SaleId], references: [Id], onUpdate: NoAction, map: "FK__CartItems__SaleI__5A846E65")
+
+  @@index([SaleId], map: "IX_CartItems_SaleId")
+  @@map("CartItems")
+}
+
+model Agencia {
+  id                 String   @id
+  nombre             String
+  email              String   @unique
+  telefono           String
+  rut                String   @unique
+  porcentajeComision Float
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime
+  status             Boolean  @default(true)
+  Venta              Venta[]
+
+  @@index([rut])
+}
+
+model cash_reconciliations {
+  id            String   @id
+  paymentType   String
+  countTrx      Int
+  total         Float
+  change        Float
+  totalSquar    Float
+  totalCash     Float
+  vendedorId    String
+  justification String?
+  fecha         DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+}
+
+model DatosArriendo {
+  id            String   @id
+  fechaArriendo DateTime
+  fechaEntrega  DateTime
+  patente       String
+  ventaId       String   @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+  Venta         Venta    @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+}
+
+model DetalleVenta {
+  id                 String         @id
+  detailId           Int
+  productId          String
+  productDescription String
+  unitPrice          Float
+  quantity           Int
+  totalPrice         Float
+  cantidadDevuelta   Int?
+  estadoProducto     String?
+  observacion        String?
+  ventaId            String
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime
+  detalleOriginalId  String?
+  DetalleVenta       DetalleVenta?  @relation("DetalleVentaToDetalleVenta", fields: [detalleOriginalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_DetalleVenta DetalleVenta[] @relation("DetalleVentaToDetalleVenta")
+  Product            Product        @relation(fields: [productId], references: [id], onUpdate: NoAction)
+  Venta              Venta          @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+
+  @@unique([ventaId, detailId])
+  @@index([detalleOriginalId])
+  @@index([productId])
+}
+
+model Guia {
+  id                 String   @id
+  nombre             String
+  email              String   @unique
+  telefono           String
+  dni                String   @unique
+  porcentajeComision Float
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime
+  status             Boolean  @default(true)
+  Venta              Venta[]
+
+  @@index([dni])
+}
+
+model LoginAttempt {
+  id           Int       @id @default(autoincrement())
+  ip           String
+  email        String
+  attempts     Int       @default(0)
+  blockedUntil DateTime?
+  lastAttempt  DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
+  userId       String
+  User         User      @relation(fields: [userId], references: [id], onUpdate: NoAction)
+
+  @@unique([ip, email])
+  @@index([email])
+  @@index([ip])
+  @@index([userId])
+}
+
+model Product {
+  id           String         @id
+  name         String         @unique
+  description  String
+  type         String
+  priceUSD     Float
+  priceCLP     Float
+  priceBRL     Float
+  stock        Int
+  imageUrl     String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  status       Boolean        @default(true)
+  DetalleVenta DetalleVenta[]
+}
+
+model User {
+  id           String         @id
+  email        String         @unique
+  password     String
+  name         String
+  role         String         @default("USER")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  status       Boolean        @default(true)
+  LoginAttempt LoginAttempt[]
+}
+
+model Venta {
+  id                 String             @id
+  saleId             Int                @unique
+  transactionType    String
+  estadoVenta        String             @default("Finalizada")
+  fecha              DateTime           @default(now())
+  moneyType          String
+  paymentType        String
+  total              Float
+  paid               Float
+  change             Float
+  dni                String
+  name               String
+  email              String
+  phoneNumber        String
+  patent             String?
+  cashier            String
+  idVendedor         String
+  idGuia             String?
+  idAgencia          String?
+  comisionGuia       Float?
+  comisionAgencia    Float?
+  idVentaRelacionada Int?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime
+  DatosArriendo      DatosArriendo?
+  DetalleVenta       DetalleVenta[]
+  Agencia            Agencia?           @relation(fields: [idAgencia], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Guia               Guia?              @relation(fields: [idGuia], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Venta              Venta?             @relation("VentaToVenta", fields: [idVentaRelacionada], references: [saleId], onDelete: NoAction, onUpdate: NoAction)
+  other_Venta        Venta[]            @relation("VentaToVenta")
+  VentaPagoAgencia   VentaPagoAgencia[]
+  VentaPagoGuia      VentaPagoGuia[]
+
+  @@index([dni])
+  @@index([fecha])
+  @@index([idAgencia])
+  @@index([idGuia])
+  @@index([idVendedor])
+}
+
+model VentaPagoAgencia {
+  id      Int    @id @default(autoincrement())
+  monto   Float
+  ventaId String
+  Venta   Venta  @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+}
+
+model VentaPagoGuia {
+  id      Int    @id @default(autoincrement())
+  monto   Float
+  ventaId String
+  Venta   Venta  @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+}
