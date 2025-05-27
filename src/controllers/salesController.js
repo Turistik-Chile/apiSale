@@ -2,6 +2,7 @@ import { validationResult } from 'express-validator';
 import { PrismaClient } from '@prisma/client';
 import { generateSecureId } from '../utils/idGenerator.js';
 import { transformSaleResponse } from '../utils/transformResponse.js';
+import { ozyTripService, addToCart } from '../services/ozyTripService.js';
 
 const prisma = new PrismaClient();
 
@@ -62,7 +63,7 @@ const validateAndFormatTime = (timeStr) => {
  * @property {string} idioma - Idioma
  * @property {string} date - Fecha
  * @property {string} time - Hora
- * @property {number} qtypax - Cantidad de pasajeros
+ * @property {number} qtypax - Cantidad total de pasajeros (usado como fallback)
  * @property {string} opt - Opción seleccionada
  * @property {number} total - Total de la venta
  * @property {string} idSaleProvider - ID de la venta asignado por el proveedor
@@ -72,6 +73,7 @@ const validateAndFormatTime = (timeStr) => {
 /**
  * @typedef {Object} ItemCart
  * @property {string} idItemEcommerce - ID del ítem del ecommerce
+ * @property {number} [quantity] - Cantidad de personas para este item (opcional, para futuras implementaciones)
  */
 
 /**
@@ -94,6 +96,14 @@ export const createSale = async (req, res) => {
       return res.status(400).json({
         message: 'El ID de venta del proveedor es requerido',
         error: 'MISSING_PROVIDER_SALE_ID'
+      });
+    }
+
+    // Validar que exista al menos un item en el carrito
+    if (!custommer.itemsCart || custommer.itemsCart.length === 0) {
+      return res.status(400).json({
+        message: 'Debe haber al menos un item en el carrito',
+        error: 'EMPTY_CART'
       });
     }
 
@@ -123,39 +133,263 @@ export const createSale = async (req, res) => {
       });
     }
 
-    // Crear la venta con todos sus items en una sola transacción
-    const sale = await prisma.sale.create({
-      data: {
-        ProviderName: provider.name,
-        Name: custommer.name,
-        LastName: custommer.lastName,
-        Email: custommer.email,
-        PhoneNumber: custommer.phoneNumber,
-        Country: custommer.country,
-        City: custommer.city,
-        Language: custommer.idioma,
-        Date: new Date(custommer.date),
-        Time: formattedTime,
-        QtyPax: custommer.qtypax,
-        Opt: custommer.opt,
-        Total: custommer.total,
-        idSaleProvider: custommer.idSaleProvider,
-        secureId: generateSecureId(new Date(custommer.date)),
-        CartItems: {
-          create: custommer.itemsCart.map(item => ({
-            IdItemEcommerce: item.idItemEcommerce
-          }))
-        }
-      },
-      include: {
-        CartItems: true
+    // Obtener información del tour de OzyTrip
+    let ozyTripResponse = null;
+    let cartResponse = null;
+    try {
+      // 1. Obtener token de OzyTrip
+      console.log('🔑 [OzyTrip] Obteniendo token...');
+      const token = await ozyTripService.getToken();
+      if (!token) {
+        throw new Error('No se pudo obtener el token de autenticación');
       }
-    });
+      console.log('✅ [OzyTrip] Token obtenido exitosamente');
 
-    return res.status(201).json({
-      message: 'Venta creada exitosamente',
-      data: transformSaleResponse(sale)
-    });
+      // 2. Obtener información del tour
+      console.log('🔍 [OzyTrip] Obteniendo información del tour...');
+      const tourInfo = await ozyTripService.getTourInformation({
+        tourCode: custommer.itemsCart[0].idItemEcommerce,
+        date: custommer.date,
+        numberDays: 1 // Por defecto 1 día, ajustar según necesidad
+      });
+
+      ozyTripResponse = {
+        tourInfo,
+        status: 'SUCCESS',
+        timestamp: new Date().toISOString()
+      };
+
+      // Validar disponibilidad
+      if (!tourInfo) {
+        throw new Error('No se recibió información del tour');
+      }
+
+      // Verificar si hay fechas disponibles y cupos
+      const hasAvailableDates = tourInfo.dates && tourInfo.dates.length > 0;
+      if (!hasAvailableDates) {
+        return res.status(400).json({
+          message: 'No hay fechas disponibles para el tour',
+          error: 'NO_AVAILABILITY',
+          details: {
+            tourCode: custommer.itemsCart[0].idItemEcommerce,
+            date: custommer.date
+          }
+        });
+      }
+
+      // Buscar la fecha específica solicitada
+      const requestedDate = tourInfo.dates.find(d => d.date === custommer.date);
+      if (!requestedDate) {
+        return res.status(400).json({
+          message: 'La fecha solicitada no está disponible',
+          error: 'DATE_NOT_AVAILABLE',
+          details: {
+            tourCode: custommer.itemsCart[0].idItemEcommerce,
+            date: custommer.date,
+            availableDates: tourInfo.dates.map(d => d.date)
+          }
+        });
+      }
+
+      // Verificar si hay cupos disponibles
+      const hasAvailableQuota = requestedDate.quotas.some(q => q.availableQuota > 0);
+      if (!hasAvailableQuota) {
+        return res.status(400).json({
+          message: 'No hay cupos disponibles para la fecha seleccionada',
+          error: 'NO_QUOTA_AVAILABLE',
+          details: {
+            tourCode: custommer.itemsCart[0].idItemEcommerce,
+            date: custommer.date,
+            quotas: requestedDate.quotas
+          }
+        });
+      }
+
+      // Validar que la cantidad de pasajeros no exceda los cupos disponibles
+      const maxAvailableQuota = Math.max(...requestedDate.quotas.map(q => q.availableQuota));
+      if (custommer.qtypax > maxAvailableQuota) {
+        return res.status(400).json({
+          message: `La cantidad de pasajeros (${custommer.qtypax}) excede los cupos disponibles (${maxAvailableQuota})`,
+          error: 'EXCEEDS_AVAILABLE_QUOTA',
+          details: {
+            tourCode: custommer.itemsCart[0].idItemEcommerce,
+            date: custommer.date,
+            requestedPax: custommer.qtypax,
+            availableQuota: maxAvailableQuota,
+            quotas: requestedDate.quotas
+          }
+        });
+      }
+
+      // 3. Agregar al carrito de OzyTrip
+      console.log('\n🛒 [OzyTrip] Agregando al carrito...');
+      console.log('📝 [OzyTrip] Información del tour:', {
+        tourCode: custommer.itemsCart[0].idItemEcommerce,
+        date: custommer.date,
+        time: custommer.time,
+        qtypax: custommer.qtypax,
+        encounterType: tourInfo.encounterTypeDescription,
+        informationRequired: tourInfo.informationRequiredDescription
+      });
+      
+      // Usar la hora de inicio del tour obtenida en tourInfo
+      const tourStartTime = tourInfo.startTime; // Formato completo HH:mm:ss
+      console.log('⏰ [OzyTrip] Usando hora de inicio del tour:', {
+        completo: tourStartTime
+      });
+
+      // Preparar datos del carrito según el formato exacto de la API
+      console.log('\n📦 [OzyTrip] Preparando datos del carrito...');
+      const cartData = {
+        // Campos según el formato de la API
+        idBooking: null, // Opcional, si no viene se asume que es el primer ítem
+        tourCode: tourInfo.tourCode, // Usar el tourCode de la información del tour
+        serviceDate: `${custommer.date}T${tourStartTime}`,
+        startTime: tourStartTime, // Usar el formato completo HH:mm:ss
+        meetingPointId: null,
+        pickupLocationId: null,
+        ageGroups: []
+      };
+
+      // Si el tour tiene precios para diferentes grupos etarios, agregarlos
+      if (tourInfo.priceHeaders && tourInfo.priceHeaders.length > 0) {
+        const prices = tourInfo.priceHeaders[0].prices;
+        console.log('\n💰 [OzyTrip] Precios disponibles:', prices.map(p => ({
+          ageGroup: p.ageGroupCode,
+          price: p.unitPrice
+        })));
+
+        // Agregar grupos etarios según los precios disponibles
+        cartData.ageGroups = prices.map(price => {
+          // Usar el tourCode como idItemEcommerce ya que es el mismo tour
+          const quantity = price.ageGroupCode === 'ADT' ? custommer.qtypax : 0;
+          
+          return {
+            idItemEcommerce: tourInfo.tourCode, // Usar el mismo tourCode
+            ageGroupCode: price.ageGroupCode,
+            quantity: quantity
+          };
+        }).filter(group => group.quantity > 0);
+
+        console.log('\n👥 [OzyTrip] Grupos etarios configurados:', cartData.ageGroups);
+      } else {
+        // Si no hay precios específicos, usar el grupo adulto por defecto
+        cartData.ageGroups = [{
+          idItemEcommerce: tourInfo.tourCode, // Usar el mismo tourCode
+          ageGroupCode: 'ADT',
+          quantity: custommer.qtypax
+        }];
+      }
+
+      console.log('\n📦 [OzyTrip] Datos del carrito según API:', JSON.stringify(cartData, null, 2));
+      console.log('\n🔍 [OzyTrip] Validando estructura de datos:');
+      console.log('- Campos presentes:', Object.keys(cartData).join(', '));
+      console.log('- Cantidad de grupos etarios:', cartData.ageGroups.length);
+      console.log('- Tipo de encuentro:', tourInfo.encounterTypeDescription);
+      
+      try {
+        cartResponse = await addToCart(cartData);
+        console.log('\n✅ [OzyTrip] Respuesta del carrito:', JSON.stringify(cartResponse, null, 2));
+      } catch (cartError) {
+        console.error('\n❌ [OzyTrip] Error al agregar al carrito:', {
+          message: cartError.message,
+          code: cartError.code,
+          response: cartError.response?.data || 'No hay datos de respuesta'
+        });
+        throw cartError;
+      }
+
+    } catch (ozyTripError) {
+      console.error('❌ [OzyTrip] Error en el proceso:', ozyTripError);
+      ozyTripResponse = {
+        error: ozyTripError.message,
+        status: 'ERROR',
+        timestamp: new Date().toISOString()
+      };
+
+      // Si es un error de disponibilidad o carrito, retornar 400
+      if (ozyTripError.message.includes('disponibilidad') || 
+          ozyTripError.message.includes('cupos') || 
+          ozyTripError.message.includes('carrito')) {
+        return res.status(400).json({
+          message: ozyTripError.message,
+          error: ozyTripError.message.includes('carrito') ? 'CART_ERROR' : 'NO_AVAILABILITY',
+          details: {
+            tourCode: custommer.itemsCart[0].idItemEcommerce,
+            date: custommer.date
+          }
+        });
+      }
+
+      // Para otros errores, continuar con la creación de la venta pero con el error registrado
+    }
+
+    // Crear la venta con todos sus items en una sola transacción
+    try {
+      const sale = await prisma.sale.create({
+        data: {
+          ProviderName: provider.name,
+          Name: custommer.name,
+          LastName: custommer.lastName,
+          Email: custommer.email,
+          PhoneNumber: custommer.phoneNumber,
+          Country: custommer.country,
+          City: custommer.city,
+          Language: custommer.idioma,
+          Date: new Date(custommer.date),
+          Time: formattedTime,
+          QtyPax: custommer.qtypax,
+          Opt: custommer.opt,
+          Total: custommer.total,
+          idSaleProvider: custommer.idSaleProvider,
+          secureId: generateSecureId(new Date(custommer.date)),
+          ozyTripResponse: JSON.stringify({
+            status: ozyTripResponse.status,
+            timestamp: ozyTripResponse.timestamp,
+            tourInfo: ozyTripResponse.tourInfo ? {
+              tourCode: ozyTripResponse.tourInfo.tourCode,
+              name: ozyTripResponse.tourInfo.name,
+              dates: ozyTripResponse.tourInfo.dates?.map(d => ({
+                date: d.date,
+                quotas: d.quotas?.map(q => ({
+                  startTime: q.startTime,
+                  endTime: q.endTime,
+                  availableQuota: q.availableQuota
+                }))
+              }))
+            } : null,
+            error: ozyTripResponse.error,
+            cartResponse: cartResponse
+          }),
+          CartItems: {
+            create: custommer.itemsCart.map(item => ({
+              IdItemEcommerce: item.idItemEcommerce
+            }))
+          }
+        },
+        include: {
+          CartItems: true
+        }
+      });
+
+      // Determinar el mensaje de respuesta basado en el resultado de OzyTrip
+      const responseMessage = ozyTripResponse.error 
+        ? 'Venta creada pero hubo un error al obtener información de OzyTrip'
+        : 'Venta creada exitosamente';
+
+      return res.status(201).json({
+        message: responseMessage,
+        data: transformSaleResponse(sale),
+        ozyTripStatus: ozyTripResponse.error ? 'ERROR' : 'SUCCESS',
+        ozyTripInfo: ozyTripResponse.tourInfo || null
+      });
+    } catch (dbError) {
+      console.error('Error al crear la venta en la base de datos:', dbError);
+      return res.status(500).json({
+        message: 'Error al crear la venta en la base de datos',
+        error: dbError.message
+      });
+    }
   } catch (error) {
     console.error('Error al crear la venta:', error);
     return res.status(500).json({

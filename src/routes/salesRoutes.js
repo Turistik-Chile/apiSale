@@ -2,6 +2,7 @@ import express from 'express';
 import { body } from 'express-validator';
 import { createSale, updateSale, cancelFullSale, updatePaxQuantity } from '../controllers/salesController.js';
 import { basicAuth } from '../middleware/basicAuth.middleware.js';
+import { ozyTripService } from '../services/ozyTripService.js';
 
 const router = express.Router();
 
@@ -146,6 +147,107 @@ const router = express.Router();
  *           total: 10000.90
  *           itemsCart:
  *             - idItemEcommerce: "8fc92a28-e13d-41fd-b6a8-8974d4fb55ec"
+ *     Error:
+ *       type: object
+ *       properties:
+ *         message:
+ *           type: string
+ *           description: Mensaje descriptivo del error
+ *         error:
+ *           type: string
+ *           description: Código de error específico
+ *       example:
+ *         message: "Error de validación en los datos"
+ *         error: "VALIDATION_ERROR"
+ *     ValidationError:
+ *       type: object
+ *       properties:
+ *         errors:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               msg:
+ *                 type: string
+ *                 description: Mensaje de error
+ *               param:
+ *                 type: string
+ *                 description: Campo que causó el error
+ *               location:
+ *                 type: string
+ *                 description: Ubicación del error (body, query, params)
+ *       example:
+ *         errors: [
+ *           {
+ *             msg: "El email es inválido",
+ *             param: "custommer.email",
+ *             location: "body"
+ *           }
+ *         ]
+ *     ErrorCodes:
+ *       type: object
+ *       description: |
+ *         Códigos de error de la API:
+ *         - VALIDATION_ERROR: Error en la validación de datos de entrada
+ *         - SALE_NOT_FOUND: Venta no encontrada
+ *         - INVALID_SALE_STATUS: Estado de venta inválido para la operación
+ *         - INVALID_TIME_FORMAT: Formato de hora inválido
+ *         - INVALID_PAX_QUANTITY: Cantidad de pasajeros inválida
+ *         - INVALID_PAX_OPERATION: Operación inválida con pasajeros
+ *         - DUPLICATE_PROVIDER_SALE_ID: ID de venta duplicado
+ *         - MISSING_PROVIDER_SALE_ID: Falta el ID de venta del proveedor
+ *         - DATABASE_ERROR: Error en la base de datos
+ *         - INTERNAL_SERVER_ERROR: Error interno del servidor
+ * 
+ *   responses:
+ *     ValidationError:
+ *       description: Error de validación en los datos
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ValidationError'
+ *     NotFound:
+ *       description: Recurso no encontrado
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 example: "Venta no encontrada"
+ *               error:
+ *                 type: string
+ *                 example: "SALE_NOT_FOUND"
+ *     InvalidStatus:
+ *       description: Estado inválido para la operación
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 example: "No se puede modificar una venta en estado CANCELLED"
+ *               error:
+ *                 type: string
+ *                 example: "INVALID_SALE_STATUS"
+ *     DuplicateSale:
+ *       description: ID de venta duplicado
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 example: "Ya existe una venta registrada con este ID de proveedor"
+ *               error:
+ *                 type: string
+ *                 example: "DUPLICATE_PROVIDER_SALE_ID"
+ *               saleId:
+ *                 type: string
+ *                 example: "TUR-20250515-ABC1"
  */
 
 // Validaciones para la creación de una venta
@@ -198,30 +300,11 @@ const createSaleValidations = [
  *                   type: string
  *                   example: "Venta creada exitosamente"
  *                 data:
- *                   type: object
- *                   properties:
- *                     id:
- *                       type: string
- *                       example: "TUR-20250515-ABC1"
- *                     ProviderName:
- *                       type: string
- *                       example: "cyt"
- *                     Status:
- *                       type: string
- *                       example: "PROCESSING"
- *                     QtyPax:
- *                       type: integer
- *                       example: 14
+ *                   $ref: '#/components/schemas/Sale'
  *       400:
- *         description: Datos inválidos
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *         $ref: '#/components/responses/ValidationError'
  *       401:
  *         description: No autorizado
- *       409:
- *         description: Conflicto - ID de venta duplicado
  *         content:
  *           application/json:
  *             schema:
@@ -229,13 +312,25 @@ const createSaleValidations = [
  *               properties:
  *                 message:
  *                   type: string
- *                   example: "Ya existe una venta registrada con este ID de proveedor"
+ *                   example: "No autorizado"
  *                 error:
  *                   type: string
- *                   example: "DUPLICATE_PROVIDER_SALE_ID"
- *                 saleId:
+ *                   example: "UNAUTHORIZED"
+ *       409:
+ *         $ref: '#/components/responses/DuplicateSale'
+ *       500:
+ *         description: Error interno del servidor
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
  *                   type: string
- *                   example: "TUR-20250515-ABC1"
+ *                   example: "Error interno del servidor"
+ *                 error:
+ *                   type: string
+ *                   example: "INTERNAL_SERVER_ERROR"
  */
 router.post('/', basicAuth, createSaleValidations, createSale);
 
@@ -450,5 +545,102 @@ const cancelSaleValidations = [
  *         description: Venta no encontrada
  */
 router.post('/:id/cancel', basicAuth, cancelSaleValidations, cancelFullSale);
+
+// Ruta de prueba para verificar la integración con OzyTrip
+router.get('/test-ozytrip/:tourCode', async (req, res) => {
+    try {
+        const { tourCode } = req.params;
+        const today = new Date().toISOString().split('T')[0]; // Obtiene la fecha actual en formato YYYY-MM-DD
+
+        // 1. Probar obtención de información del tour
+        console.log('Obteniendo información del tour...');
+        const tourInfo = await ozyTripService.getTourInformation(tourCode, today, 7);
+        console.log('Información del tour obtenida:', JSON.stringify(tourInfo, null, 2));
+
+        // 2. Probar creación de una venta de prueba
+        console.log('\nProbando creación de venta...');
+        const testSaleData = {
+            provider: {
+                name: "cyt"
+            },
+            custommer: {
+                idSaleProvider: `TEST-${Date.now()}`, // ID único para evitar duplicados
+                name: "Test",
+                lastName: "User",
+                email: "test@example.com",
+                phoneNumber: "+56912345678",
+                country: "CL",
+                city: "Santiago",
+                idioma: "español",
+                date: today,
+                time: "14:00:00",
+                qtypax: 2,
+                opt: "Tour de Prueba",
+                total: 10000,
+                itemsCart: [
+                    {
+                        idItemEcommerce: tourCode
+                    }
+                ]
+            }
+        };
+
+        // Simular una petición HTTP para createSale
+        const mockReq = {
+            body: testSaleData
+        };
+        const mockRes = {
+            status: (code) => ({
+                json: (data) => {
+                    console.log('\nRespuesta de creación de venta:', JSON.stringify(data, null, 2));
+                    return res.json({
+                        tourInformation: tourInfo,
+                        saleCreation: data
+                    });
+                }
+            })
+        };
+
+        await createSale(mockReq, mockRes);
+
+    } catch (error) {
+        console.error('Error en la prueba:', error);
+        res.status(500).json({
+            message: 'Error durante la prueba',
+            error: error.message
+        });
+    }
+});
+
+// Endpoint para obtener el token de OzyTrip (solo desarrollo)
+router.get('/test-ozytrip-token', async (req, res) => {
+    try {
+        if (process.env.NODE_ENV !== 'development') {
+            return res.status(403).json({
+                message: 'Este endpoint solo está disponible en desarrollo'
+            });
+        }
+
+        const tokenInfo = await ozyTripService.getCurrentToken();
+        res.json({
+            message: 'Token obtenido exitosamente',
+            token: tokenInfo.token,
+            expiresAt: tokenInfo.expiresAt,
+            example: {
+                url: `${ozyTripService.apiUrl}/api/v1/tourInformation/{tourCode}/{date}/{numberDays}/{currency}`,
+                headers: {
+                    'Authorization': `Bearer ${tokenInfo.token}`,
+                    'Accept': 'application/json'
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error al obtener token de prueba:', error);
+        res.status(500).json({
+            message: 'Error al obtener token',
+            error: error.message
+        });
+    }
+});
 
 export default router; 
