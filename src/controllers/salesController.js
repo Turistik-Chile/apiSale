@@ -319,15 +319,82 @@ export const createSale = async (req, res) => {
         const addPassengersResponse = await ozyTripService.addPassengers(passengersData);
         console.log('🛬 [OzyTrip] Respuesta de addPassengers:', JSON.stringify(addPassengersResponse, null, 2));
         
-        // Si tenemos idBooking, consideramos la operación exitosa
+        // Si tenemos idBooking, procedemos con el pago
         if (addPassengersResponse && addPassengersResponse.idBooking) {
-          ozyTripResponse = {
-            status: 'SUCCESS',
-            timestamp: new Date().toISOString(),
-            tourInfo: ozyTripResponse.tourInfo,
-            cartResponse: cartResponse,
-            passengersResponse: addPassengersResponse
+          // Calcular el total real basado en el precio del tour
+          const tourPrice = ozyTripResponse.tourInfo.priceHeaders[0].prices.find(p => p.ageGroupCode === 'ADT').unitPrice;
+          const totalAmount = tourPrice * custommer.qtypax;
+
+          console.log('\n💰 [OzyTrip] Cálculo del total:', {
+            precioUnitario: tourPrice,
+            cantidadPasajeros: custommer.qtypax,
+            totalCalculado: totalAmount
+          });
+
+          // Formatear la fecha sin milisegundos y en formato local
+          const now = new Date();
+          const paymentDate = now.toISOString().split('.')[0]; // Elimina milisegundos y Z
+
+          // Preparar datos del pago según la documentación oficial
+          const paymentData = {
+            // Campos obligatorios
+            idBooking: addPassengersResponse.idBooking,
+            totalAmount: totalAmount,
+            hasAdvancePayment: false, // Por defecto false, debe coincidir con startPayment
+            paymentDate: paymentDate, // Formato yyyy-MM-ddThh:mm:ss
+            authorizationTransactionId: custommer.idSaleProvider,
+            paymentMethod: 'WEBPAY', // Medio de pago (Webpay, Paypal, Ebanx, Stripe, etc)
+            idOrderNumber: custommer.idSaleProvider,
+
+            // Campos opcionales con valores por defecto
+            currency: 'CLP', // Por defecto CLP si no se especifica
+            cardType: null, // Opcional: VISA, MASTERCARD, AMERICAN EXPRESS, DINNERS CLUB, REDCOMPRA
+            cardNumber: null, // Opcional: últimos 4 dígitos de la tarjeta
+            couponCode: null // Opcional: código de cupón si se utiliza
           };
+
+          console.log('\n💳 [OzyTrip] Iniciando proceso de pago...');
+          console.log('📦 [OzyTrip] Datos del pago (según documentación):', {
+            // Campos obligatorios
+            idBooking: paymentData.idBooking,
+            totalAmount: paymentData.totalAmount,
+            hasAdvancePayment: paymentData.hasAdvancePayment,
+            paymentDate: paymentData.paymentDate,
+            authorizationTransactionId: paymentData.authorizationTransactionId,
+            paymentMethod: paymentData.paymentMethod,
+            idOrderNumber: paymentData.idOrderNumber,
+            
+            // Campos opcionales
+            currency: paymentData.currency,
+            cardType: paymentData.cardType,
+            cardNumber: paymentData.cardNumber,
+            couponCode: paymentData.couponCode
+          });
+
+          try {
+            const paymentResponse = await ozyTripService.pay(paymentData);
+            console.log('✅ [OzyTrip] Respuesta del pago:', JSON.stringify(paymentResponse, null, 2));
+
+            ozyTripResponse = {
+              status: 'SUCCESS',
+              timestamp: new Date().toISOString(),
+              tourInfo: ozyTripResponse.tourInfo,
+              cartResponse: cartResponse,
+              passengersResponse: addPassengersResponse,
+              paymentResponse: paymentResponse
+            };
+          } catch (paymentError) {
+            console.error('❌ [OzyTrip] Error al procesar el pago:', paymentError);
+            // Si el pago falla pero los pasajeros se agregaron, consideramos parcialmente exitoso
+            ozyTripResponse = {
+              status: 'PARTIAL_SUCCESS',
+              timestamp: new Date().toISOString(),
+              tourInfo: ozyTripResponse.tourInfo,
+              cartResponse: cartResponse,
+              passengersResponse: addPassengersResponse,
+              error: `Pasajeros agregados pero error en pago: ${paymentError.message}`
+            };
+          }
         } else {
           throw new Error('No se pudo confirmar la adición de pasajeros');
         }
