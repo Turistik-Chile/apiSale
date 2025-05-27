@@ -293,202 +293,239 @@ class OzyTripService {
             }
         }
     }
+
+    /**
+     * Agrega pasajeros a una reserva existente
+     * @param {Object} data - Datos de los pasajeros
+     * @param {string} data.idBooking - ID de la reserva
+     * @param {string} data.name - Nombre del cliente
+     * @param {string} data.lastName - Apellido del cliente
+     * @param {string} data.email - Email del cliente
+     * @param {string} data.phoneNumber - Teléfono del cliente
+     * @param {string} data.country - País del cliente
+     * @param {string} data.notificationType - Tipo de notificación (EMAIL o WHATSAPP)
+     * @param {boolean} data.anonymousPassengers - Si los pasajeros son anónimos
+     * @param {Array} data.passengers - Array de pasajeros (vacío si anonymousPassengers es true)
+     * @param {Array} data.itemsCart - Array de items del carrito (vacío si anonymousPassengers es true)
+     * @returns {Promise<Object>} Respuesta de la API
+     */
+    async addPassengers(data) {
+        console.log('\n🛫 [OzyTrip] Iniciando proceso de agregar pasajeros...');
+        console.log('📝 [OzyTrip] Parámetros de entrada:', JSON.stringify(data, null, 2));
+
+        // Validar campos obligatorios
+        const requiredFields = ['idBooking', 'name', 'lastName', 'email', 'phoneNumber', 'country', 'notificationType'];
+        for (const field of requiredFields) {
+            if (!data[field]) {
+                throw new Error(`El campo ${field} es obligatorio`);
+            }
+        }
+
+        // Validar formato de email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(data.email)) {
+            throw new Error('El formato del email no es válido');
+        }
+
+        // Validar tipo de notificación
+        if (!['EMAIL', 'WHATSAPP'].includes(data.notificationType)) {
+            throw new Error('El tipo de notificación debe ser EMAIL o WHATSAPP');
+        }
+
+        try {
+            // Obtener token
+            console.log('🔑 [OzyTrip] Obteniendo token...');
+            const token = await this.getToken();
+            if (!token) {
+                throw new Error('No se pudo obtener el token de autenticación');
+            }
+
+            // Preparar la petición
+            const url = `${this.apiUrl}/api/v2/addPassengers`;
+            console.log('🌐 [OzyTrip] URL de la petición:', url);
+
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json'
+            };
+
+            console.log('📤 [OzyTrip] Enviando petición al servidor con headers:', {
+                ...headers,
+                'Authorization': 'Bearer [TOKEN]'
+            });
+
+            console.log('📦 [OzyTrip] Datos a enviar:', JSON.stringify(data, null, 2));
+
+            // Realizar la petición
+            const response = await axios.post(url, data, { headers });
+
+            console.log('\n✅ [OzyTrip] Respuesta recibida del servidor:', {
+                status: response.status,
+                statusText: response.statusText,
+                hasData: !!response.data,
+                headers: response.headers
+            });
+
+            if (response.status === 200) {
+                console.log('✅ [OzyTrip] Pasajeros agregados exitosamente');
+                return response.data || { idBooking: data.idBooking, status: 'success' };
+            } else {
+                throw new Error('No se recibió una respuesta válida del servidor');
+            }
+
+        } catch (error) {
+            console.error('❌ [OzyTrip] Error al agregar pasajeros:', {
+                message: error.message,
+                code: error.code,
+                response: error.response?.data || 'No hay datos de respuesta'
+            });
+
+            if (error.response?.data) {
+                throw new Error(`Error al agregar pasajeros: ${error.response.data.message || error.message}`);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Agrega items al carrito de OzyTrip
+     * @param {Object} data - Parámetros para agregar al carrito
+     * @param {string} [data.idBooking] - ID interno de la reserva en OzyTrip (opcional)
+     * @param {string} data.tourCode - Excursión que se desea agregar al carrito
+     * @param {string} data.serviceDate - Fecha de la excursión en formato ISO
+     * @param {string} data.startTime - Hora de la excursión en formato HH:mm:ss
+     * @param {number} [data.meetingPointId] - Identificador del Meeting Point
+     * @param {string} [data.pickupLocationId] - Identificador de recogida
+     * @param {Array<Object>} data.ageGroups - Listado de grupos etarios
+     * @returns {Promise<Object>} Respuesta de OzyTrip
+     */
+    async addToCart(data) {
+        try {
+            console.log('\n🛒 [OzyTrip] Iniciando proceso de agregar al carrito...');
+            console.log('📝 [OzyTrip] Parámetros de entrada:', JSON.stringify(data, null, 2));
+
+            // Validar campos obligatorios
+            const requiredFields = ['tourCode', 'serviceDate', 'startTime', 'ageGroups'];
+            console.log('\n🔍 [OzyTrip] Validando campos obligatorios...');
+            const missingFields = requiredFields.filter(field => !data[field]);
+            if (missingFields.length > 0) {
+                console.error('❌ [OzyTrip] Campos obligatorios faltantes:', missingFields);
+                throw new Error(`Campos obligatorios faltantes: ${missingFields.join(', ')}`);
+            }
+            console.log('✅ [OzyTrip] Campos obligatorios validados');
+
+            // Validar estructura de ageGroups
+            console.log('\n🔍 [OzyTrip] Validando estructura de ageGroups...');
+            if (!Array.isArray(data.ageGroups) || data.ageGroups.length === 0) {
+                console.error('❌ [OzyTrip] ageGroups debe ser un array no vacío');
+                throw new Error('Debe proporcionar al menos un grupo etario');
+            }
+            console.log('✅ [OzyTrip] Estructura de ageGroups válida');
+
+            // Validar cada grupo etario
+            console.log('\n🔍 [OzyTrip] Validando cada grupo etario...');
+            data.ageGroups.forEach((group, index) => {
+                console.log(`\nValidando grupo etario ${index + 1}:`, JSON.stringify(group, null, 2));
+                const requiredGroupFields = ['idItemEcommerce', 'ageGroupCode', 'quantity'];
+                const missingGroupFields = requiredGroupFields.filter(field => !group[field]);
+                if (missingGroupFields.length > 0) {
+                    console.error(`❌ [OzyTrip] Grupo etario ${index + 1}: campos faltantes:`, missingGroupFields);
+                    throw new Error(`Grupo etario ${index + 1}: campos obligatorios faltantes: ${missingGroupFields.join(', ')}`);
+                }
+                if (group.quantity <= 0) {
+                    console.error(`❌ [OzyTrip] Grupo etario ${index + 1}: cantidad inválida:`, group.quantity);
+                    throw new Error(`Grupo etario ${index + 1}: la cantidad debe ser mayor a cero`);
+                }
+                console.log(`✅ [OzyTrip] Grupo etario ${index + 1} válido`);
+            });
+
+            // Validar formato de fecha y hora
+            console.log('\n🔍 [OzyTrip] Validando formato de fecha y hora...');
+            const dateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+            if (!dateRegex.test(data.serviceDate)) {
+                console.error('❌ [OzyTrip] Formato de fecha inválido:', data.serviceDate);
+                throw new Error('Formato de fecha inválido. Debe ser yyyy-MM-ddThh:mm:ss');
+            }
+            console.log('✅ [OzyTrip] Formato de fecha válido');
+
+            const timeRegex = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
+            if (!timeRegex.test(data.startTime)) {
+                console.error('❌ [OzyTrip] Formato de hora inválido:', data.startTime);
+                throw new Error('Formato de hora inválido. Debe ser HH:mm:ss');
+            }
+            console.log('✅ [OzyTrip] Formato de hora válido');
+
+            // Validar que la hora en serviceDate coincida con startTime
+            const serviceTime = data.serviceDate.split('T')[1];
+            if (serviceTime !== data.startTime) {
+                console.error('❌ [OzyTrip] Hora en serviceDate no coincide con startTime:', {
+                    serviceDate: data.serviceDate,
+                    serviceTime,
+                    startTime: data.startTime
+                });
+                throw new Error('La hora en serviceDate debe coincidir con startTime');
+            }
+            console.log('✅ [OzyTrip] Hora en serviceDate coincide con startTime');
+
+            // Obtener token
+            console.log('\n🔑 [OzyTrip] Obteniendo token...');
+            const token = await this.getToken();
+            if (!token) {
+                throw new Error('No se pudo obtener el token de autenticación');
+            }
+            console.log('✅ [OzyTrip] Token obtenido exitosamente');
+
+            // Preparar la petición
+            const url = `${this.apiUrl}/api/v1/addToCart`;
+            console.log('\n🌐 [OzyTrip] URL de la petición:', url);
+            console.log('📤 [OzyTrip] Enviando petición al servidor con headers:', {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer [TOKEN]',
+                'Accept': 'application/json'
+            });
+
+            console.log('\n📦 [OzyTrip] Datos a enviar:', JSON.stringify(data, null, 2));
+
+            // Realizar la petición
+            const response = await axios.post(url, data, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/json'
+                }
+            });
+
+            console.log('\n✅ [OzyTrip] Respuesta recibida del servidor:', {
+                status: response.status,
+                statusText: response.statusText,
+                hasData: !!response.data,
+                headers: response.headers
+            });
+
+            if (response.status === 200 && response.data) {
+                console.log('✅ [OzyTrip] Item agregado al carrito exitosamente');
+                return response.data;
+            } else {
+                throw new Error('No se recibió una respuesta válida del servidor');
+            }
+
+        } catch (error) {
+            console.error('\n❌ [OzyTrip] Error al agregar al carrito:', {
+                message: error.message,
+                code: error.code,
+                response: error.response?.data || 'No hay datos de respuesta'
+            });
+
+            if (error.response?.data) {
+                throw new Error(`Error al agregar al carrito: ${error.response.data.message || error.message}`);
+            }
+            throw error;
+        }
+    }
 }
 
 // Exportar una instancia única del servicio
 export const ozyTripService = new OzyTripService();
 
-/**
- * Agrega items al carrito de OzyTrip
- * @param {Object} params - Parámetros para agregar al carrito
- * @param {string} [params.idBooking] - ID interno de la reserva en OzyTrip (opcional, si no viene se asume que es el primer ítem)
- * @param {string} params.tourCode - Excursión que se desea agregar al carrito (Obligatorio)
- * @param {string} params.serviceDate - Fecha de la excursión en formato ISO sin zona horaria (yyyy-MM-ddThh:mm:ss) (Obligatorio)
- * @param {string} params.startTime - Hora de la excursión en formato HH:mm (Obligatorio)
- * @param {number} [params.meetingPointId] - Identificador del Meeting Point (Obligatorio si EncounterType = MEETINGPOINT)
- * @param {string} [params.pickupLocationId] - Identificador de recogida (Obligatorio si EncounterType = PICKUPLOCATION)
- * @param {Array<Object>} params.ageGroups - Listado de grupos etarios (Obligatorio)
- * @param {string} params.ageGroups[].idItemEcommerce - Identificador interno del eCommerce del ítem (Obligatorio)
- * @param {string} params.ageGroups[].ageGroupCode - Sigla del grupo etario (Obligatorio)
- * @param {number} params.ageGroups[].quantity - Cantidad del grupo etario (Obligatorio, mayor a cero)
- * @returns {Promise<Object>} Respuesta de OzyTrip
- */
-export const addToCart = async (params) => {
-  try {
-    console.log('\n🛒 [OzyTrip] Iniciando proceso de agregar al carrito...');
-    console.log('📝 [OzyTrip] Parámetros de entrada:', JSON.stringify(params, null, 2));
-
-    // Validar campos obligatorios
-    const requiredFields = [
-      'tourCode', 'serviceDate', 'startTime', 'ageGroups'
-    ];
-
-    console.log('\n🔍 [OzyTrip] Validando campos obligatorios...');
-    const missingFields = requiredFields.filter(field => !params[field]);
-    if (missingFields.length > 0) {
-      console.error('❌ [OzyTrip] Campos obligatorios faltantes:', missingFields);
-      throw new Error(`Campos obligatorios faltantes: ${missingFields.join(', ')}`);
-    }
-    console.log('✅ [OzyTrip] Campos obligatorios validados');
-
-    // Validar estructura de ageGroups
-    console.log('\n🔍 [OzyTrip] Validando estructura de ageGroups...');
-    if (!Array.isArray(params.ageGroups) || params.ageGroups.length === 0) {
-      console.error('❌ [OzyTrip] ageGroups debe ser un array no vacío');
-      throw new Error('Debe proporcionar al menos un grupo etario');
-    }
-    console.log('✅ [OzyTrip] Estructura de ageGroups válida');
-
-    // Validar cada grupo etario
-    console.log('\n🔍 [OzyTrip] Validando cada grupo etario...');
-    params.ageGroups.forEach((group, index) => {
-      console.log(`\nValidando grupo etario ${index + 1}:`, JSON.stringify(group, null, 2));
-      const requiredGroupFields = ['idItemEcommerce', 'ageGroupCode', 'quantity'];
-      const missingGroupFields = requiredGroupFields.filter(field => !group[field]);
-      if (missingGroupFields.length > 0) {
-        console.error(`❌ [OzyTrip] Grupo etario ${index + 1}: campos faltantes:`, missingGroupFields);
-        throw new Error(`Grupo etario ${index + 1}: campos obligatorios faltantes: ${missingGroupFields.join(', ')}`);
-      }
-      if (group.quantity <= 0) {
-        console.error(`❌ [OzyTrip] Grupo etario ${index + 1}: cantidad inválida:`, group.quantity);
-        throw new Error(`Grupo etario ${index + 1}: la cantidad debe ser mayor a cero`);
-      }
-      console.log(`✅ [OzyTrip] Grupo etario ${index + 1} válido`);
-    });
-
-    // Validar formato de fecha y hora
-    console.log('\n🔍 [OzyTrip] Validando formato de fecha y hora...');
-    const dateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
-    if (!dateRegex.test(params.serviceDate)) {
-      console.error('❌ [OzyTrip] Formato de fecha inválido:', params.serviceDate);
-      throw new Error('Formato de fecha inválido. Debe ser yyyy-MM-ddThh:mm:ss');
-    }
-    console.log('✅ [OzyTrip] Formato de fecha válido');
-
-    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
-    if (!timeRegex.test(params.startTime)) {
-      console.error('❌ [OzyTrip] Formato de hora inválido:', params.startTime);
-      throw new Error('Formato de hora inválido. Debe ser HH:mm:ss');
-    }
-    console.log('✅ [OzyTrip] Formato de hora válido');
-
-    // Validar que la hora en serviceDate coincida con startTime
-    const serviceTime = params.serviceDate.split('T')[1];
-    if (serviceTime !== params.startTime) {
-      console.error('❌ [OzyTrip] Hora en serviceDate no coincide con startTime:', {
-        serviceDate: params.serviceDate,
-        serviceTime,
-        startTime: params.startTime
-      });
-      throw new Error('La hora en serviceDate debe coincidir con startTime');
-    }
-    console.log('✅ [OzyTrip] Hora en serviceDate coincide con startTime');
-
-    console.log('\n🔑 [OzyTrip] Obteniendo token...');
-    const token = await ozyTripService.getToken();
-    if (!token) {
-      console.error('❌ [OzyTrip] Error: No se pudo obtener el token de autenticación');
-      throw new Error('No se pudo obtener el token de autenticación');
-    }
-    console.log('✅ [OzyTrip] Token obtenido exitosamente');
-
-    const url = `${ozyTripService.apiUrl}/api/v1/addToCart`;
-    console.log('\n🌐 [OzyTrip] URL de la petición:', url);
-    console.log('📤 [OzyTrip] Enviando petición al servidor con headers:', {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer [TOKEN]',
-      'Accept': 'application/json'
-    });
-
-    console.log('\n📦 [OzyTrip] Datos a enviar:', JSON.stringify(params, null, 2));
-    const response = await axios.post(url, params, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/json'
-      }
-    });
-
-    console.log('\n✅ [OzyTrip] Respuesta recibida del servidor:', {
-      status: response.status,
-      statusText: response.statusText,
-      hasData: !!response.data,
-      headers: response.headers
-    });
-
-    if (process.env.NODE_ENV === 'development') {
-      console.log('\n📦 [OzyTrip] Detalles de la respuesta:');
-      console.log('----------------------------------------');
-      console.log('Información del Carrito:');
-      console.log('  ID de Reserva:', response.data.idBooking);
-      console.log('  Fecha de Expiración:', new Date(response.data.bookingExpirationDate).toLocaleString());
-      console.log('  Tiempo de Espera:', response.data.waitTime, 'minutos');
-      
-      if (response.data.error) {
-        console.log('\n❌ [OzyTrip] Error en la respuesta:');
-        console.log('  Mensaje:', response.data.message);
-        console.log('  Código:', response.data.error);
-        if (response.data.details) {
-          console.log('  Detalles:', JSON.stringify(response.data.details, null, 2));
-        }
-      }
-      console.log('----------------------------------------\n');
-    }
-
-    if (!response.data) {
-      console.error('❌ [OzyTrip] La respuesta no contiene datos');
-      throw new Error('La respuesta del servidor no contiene datos');
-    }
-
-    console.log('✅ [OzyTrip] Item agregado al carrito exitosamente');
-    return response.data;
-  } catch (error) {
-    console.error('\n❌ [OzyTrip] Error en addToCart:', {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      response: error.response ? {
-        status: error.response.status,
-        statusText: error.response.statusText,
-        data: error.response.data,
-        headers: error.response.headers
-      } : 'No hay respuesta del servidor'
-    });
-
-    // Determinar el tipo de error
-    if (error.response) {
-      console.log('\n🔍 [OzyTrip] Analizando respuesta de error:');
-      console.log('Status:', error.response.status);
-      console.log('Status Text:', error.response.statusText);
-      console.log('Headers:', error.response.headers);
-      console.log('Data:', error.response.data);
-
-      switch (error.response.status) {
-        case 401:
-          throw new Error('Error de autenticación con OzyTrip');
-        case 400:
-          if (error.response.data?.type === 'validation-error') {
-            const validationErrors = error.response.data.errors;
-            const errorMessages = Object.entries(validationErrors)
-              .map(([field, errors]) => `${field}: ${errors.join(', ')}`)
-              .join('\n');
-            console.error('❌ [OzyTrip] Errores de validación:', errorMessages);
-            throw new Error(`Errores de validación:\n${errorMessages}`);
-          }
-          throw new Error(error.response.data?.message || 'Error en la solicitud al carrito');
-        case 404:
-          throw new Error('Servicio de carrito no encontrado');
-        case 500:
-          throw new Error('Error interno del servidor de OzyTrip');
-        default:
-          throw new Error(`Error al agregar al carrito: ${error.response.data?.message || error.message}`);
-      }
-    } else if (error.request) {
-      console.error('❌ [OzyTrip] No se recibió respuesta del servidor');
-      throw new Error('No se recibió respuesta del servidor de OzyTrip');
-    } else {
-      console.error('❌ [OzyTrip] Error en la configuración de la petición:', error.message);
-      throw new Error(`Error al agregar al carrito: ${error.message}`);
-    }
-  }
-}; 
+// No exportar las funciones individuales ya que están disponibles a través de ozyTripService 

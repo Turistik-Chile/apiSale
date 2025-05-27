@@ -2,7 +2,7 @@ import { validationResult } from 'express-validator';
 import { PrismaClient } from '@prisma/client';
 import { generateSecureId } from '../utils/idGenerator.js';
 import { transformSaleResponse } from '../utils/transformResponse.js';
-import { ozyTripService, addToCart } from '../services/ozyTripService.js';
+import { ozyTripService } from '../services/ozyTripService.js';
 
 const prisma = new PrismaClient();
 
@@ -288,7 +288,7 @@ export const createSale = async (req, res) => {
       console.log('- Tipo de encuentro:', tourInfo.encounterTypeDescription);
       
       try {
-        cartResponse = await addToCart(cartData);
+        cartResponse = await ozyTripService.addToCart(cartData);
         console.log('\n✅ [OzyTrip] Respuesta del carrito:', JSON.stringify(cartResponse, null, 2));
       } catch (cartError) {
         console.error('\n❌ [OzyTrip] Error al agregar al carrito:', {
@@ -297,6 +297,54 @@ export const createSale = async (req, res) => {
           response: cartError.response?.data || 'No hay datos de respuesta'
         });
         throw cartError;
+      }
+
+      // Llamar a addPassengers (pasajeros anónimos) después de agregar al carrito
+      console.log('\n🛫 [OzyTrip] Llamando a addPassengers (pasajeros anónimos) con idBooking:', cartResponse.idBooking);
+      const passengersData = {
+        idBooking: cartResponse.idBooking,
+        name: custommer.name,
+        lastName: custommer.lastName,
+        email: custommer.email,
+        phoneNumber: custommer.phoneNumber,
+        country: custommer.country,
+        notificationType: 'EMAIL', // (o "WHATSAPP" según corresponda)
+        anonymousPassengers: true, // pasajeros anónimos
+        passengers: [],
+        itemsCart: []
+      };
+      console.log('📦 [OzyTrip] Datos de pasajeros (payload):', JSON.stringify(passengersData, null, 2));
+      
+      try {
+        const addPassengersResponse = await ozyTripService.addPassengers(passengersData);
+        console.log('🛬 [OzyTrip] Respuesta de addPassengers:', JSON.stringify(addPassengersResponse, null, 2));
+        
+        // Si tenemos idBooking, consideramos la operación exitosa
+        if (addPassengersResponse && addPassengersResponse.idBooking) {
+          ozyTripResponse = {
+            status: 'SUCCESS',
+            timestamp: new Date().toISOString(),
+            tourInfo: ozyTripResponse.tourInfo,
+            cartResponse: cartResponse,
+            passengersResponse: addPassengersResponse
+          };
+        } else {
+          throw new Error('No se pudo confirmar la adición de pasajeros');
+        }
+      } catch (passengersError) {
+        console.error('❌ [OzyTrip] Error al agregar pasajeros:', passengersError);
+        // Si tenemos idBooking del carrito, consideramos parcialmente exitoso
+        if (cartResponse && cartResponse.idBooking) {
+          ozyTripResponse = {
+            status: 'PARTIAL_SUCCESS',
+            timestamp: new Date().toISOString(),
+            tourInfo: ozyTripResponse.tourInfo,
+            cartResponse: cartResponse,
+            error: `Carrito creado pero error al agregar pasajeros: ${passengersError.message}`
+          };
+        } else {
+          throw passengersError;
+        }
       }
 
     } catch (ozyTripError) {
