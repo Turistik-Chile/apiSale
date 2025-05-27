@@ -30,25 +30,43 @@ model Sale {
   CancelReason    String?    @db.NVarChar(500)
   secureId        String?    @db.NVarChar(50)
   ozyTripResponse String?    @db.Text
+  ozyTripIdBooking String?   @db.NVarChar(100)
+  ozyTripSalesCode String?   @db.NVarChar(100)
+  ozyTripBalance  Decimal?   @db.Decimal(10, 2)
+  ozyTripHasAdvancePayment Boolean? @default(false)
   CartItems       CartItem[]
   Cart            Cart?
 
   @@index([Email], map: "IX_Sales_Email")
   @@index([Status], map: "IX_Sales_Status")
   @@index([idSaleProvider], map: "IX_Sales_idSaleProvider")
+  @@index([ozyTripIdBooking], map: "IX_Sales_ozyTripIdBooking")
+  @@index([ozyTripSalesCode], map: "IX_Sales_ozyTripSalesCode")
   @@map("Sales")
 }
 
 model CartItem {
-  Id              Int       @id(map: "PK__CartItem__3214EC072D3F6056") @default(autoincrement())
-  SaleId          Int
-  IdItemEcommerce String    @db.NVarChar(100)
-  CreatedAt       DateTime? @default(now(), map: "DF__CartItems__Creat__59904A2C") @db.DateTime
-  CancelReason    String?   @db.NVarChar(500)
-  Status          String    @default("ACTIVE", map: "DF__CartItems__Statu__640DD89F") @db.NVarChar(20)
-  Sale            Sale      @relation(fields: [SaleId], references: [Id], onUpdate: NoAction, map: "FK__CartItems__SaleI__5A846E65")
+  id              Int       @id @default(autoincrement())
+  cartId          String
+  idItemEcommerce String    @db.NVarChar(100)
+  ageGroupCode    String    @db.NVarChar(10)
+  quantity        Int
+  tourCode        String    @db.NVarChar(100)
+  serviceDate     DateTime
+  startTime       String    @db.VarChar(8)
+  meetingPointId  Int?
+  pickupLocationId String?  @db.NVarChar(36)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  status          String    @default("ACTIVE") @db.NVarChar(20)
+  Cart            Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  Sale            Sale?     @relation(fields: [SaleId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  SaleId          Int?
 
-  @@index([SaleId], map: "IX_CartItems_SaleId")
+  @@index([cartId])
+  @@index([idItemEcommerce])
+  @@index([status])
+  @@index([SaleId])
   @@map("CartItems")
 }
 
@@ -338,26 +356,4 @@ model Cart {
   @@index([idBooking])
   @@index([status])
   @@map("Carts")
-}
-
-model CartItem {
-  id              Int       @id @default(autoincrement())
-  cartId          String
-  idItemEcommerce String    @db.NVarChar(100)
-  ageGroupCode    String    @db.NVarChar(10)
-  quantity        Int
-  tourCode        String    @db.NVarChar(100)
-  serviceDate     DateTime
-  startTime       String    @db.VarChar(8)
-  meetingPointId  Int?
-  pickupLocationId String?  @db.NVarChar(36)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  status          String    @default("ACTIVE") @db.NVarChar(20)
-  Cart            Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
-
-  @@index([cartId])
-  @@index([idItemEcommerce])
-  @@index([status])
-  @@map("CartItems")
 }

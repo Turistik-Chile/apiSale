@@ -17,8 +17,8 @@ class OzyTripService {
             this.clientId = 'EcommerceTuristik';
             this.clientSecret = '447a54fe-b3c9-2cb2-45d7-eb2ef7e5fe95';
         } else {
-            this.clientId = 'EcommerceTuristik2';
-            this.clientSecret = 'a5d4ca55-20bc-7f62-8cc1-c3721628e898';
+            this.clientId = 'EcommerceTuristik';
+            this.clientSecret = '6ededbfc-152a-ac7c-f406-aec2468229a4';
         }
         
         this.scope = 'ozy_trip_ecommerce_api';
@@ -468,6 +468,11 @@ class OzyTripService {
             }
             console.log('✅ [OzyTrip] Hora en serviceDate coincide con startTime');
 
+            // En el entorno de pruebas (dev) se asigna un valor por defecto (por ejemplo, 1) a meetingPointId si no se recibe.
+            if (process.env.NODE_ENV === "development" && data.meetingPointId === null) {
+                data.meetingPointId = 1; // (Se asigna 1 en pruebas si no se recibe.)
+            }
+
             // Obtener token
             console.log('\n🔑 [OzyTrip] Obteniendo token...');
             const token = await this.getToken();
@@ -481,7 +486,7 @@ class OzyTripService {
             console.log('\n🌐 [OzyTrip] URL de la petición:', url);
             console.log('📤 [OzyTrip] Enviando petición al servidor con headers:', {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer [TOKEN]',
+                'Authorization': `Bearer ${token}`,
                 'Accept': 'application/json'
             });
 
@@ -527,113 +532,148 @@ class OzyTripService {
     /**
      * Realiza el pago de una reserva
      * @param {Object} data - Datos del pago
-     * @param {string} data.idBooking - ID de la reserva
-     * @param {number} data.totalAmount - Monto total a pagar
-     * @param {string} [data.couponCode] - Código de cupón (opcional)
-     * @param {boolean} data.hasAdvancePayment - Si tiene pago por adelantado
-     * @param {string} data.paymentDate - Fecha del pago en formato ISO
-     * @param {string} [data.currency] - Moneda (opcional)
-     * @param {string} [data.cardType] - Tipo de tarjeta (opcional)
-     * @param {string} [data.cardNumber] - Número de tarjeta (opcional)
-     * @param {string} data.authorizationTransactionId - ID de transacción
-     * @param {string} data.paymentMethod - Método de pago (W: Webpay, T: Transferencia, etc)
-     * @param {string} data.idOrderNumber - ID de la orden
+     * @param {string} data.idBooking - ID interno de la reserva en OzyTrip (Obligatorio)
+     * @param {number} data.totalAmount - Monto total de la compra. Debe ser el mismo usado en /api/v1/startPayment/ (Obligatorio)
+     * @param {boolean} data.hasAdvancePayment - Indica si el cliente está pagando sólo el Pago Anticipado (Obligatorio)
+     * @param {string} data.paymentDate - Fecha del pago en formato yyyy-MM-ddThh:mm:ss (Obligatorio)
+     * @param {string} [data.currency] - Divisa según listado de /api/v1/tourcodes (Opcional, por defecto CLP)
+     * @param {string} [data.cardType] - Tipo de tarjeta (VISA, MASTERCARD, AMERICAN EXPRESS, DINNERS CLUB, REDCOMPRA)
+     * @param {string} [data.cardNumber] - Últimos 4 dígitos de la tarjeta
+     * @param {string} data.authorizationTransactionId - Identificador de la transacción en el medio de pago (Obligatorio)
+     * @param {string} data.paymentMethod - Medio de Pago (W: Webpay, T: Transferencia, etc) (Obligatorio)
+     * @param {string} data.idOrderNumber - Identificador del Número de Orden (Obligatorio)
+     * @param {string} [data.couponCode] - Código de cupón si se utiliza (Opcional)
      * @returns {Promise<Object>} Respuesta de la API
      */
-    async pay(data) {
+    async pay(paymentData) {
+        // Validar campos obligatorios
+        const requiredFields = [
+            'idBooking',
+            'totalAmount',
+            'hasAdvancePayment',
+            'paymentDate',
+            'authorizationTransactionId',
+            'paymentMethod',
+            'idOrderNumber'
+        ];
+
+        const missingFields = requiredFields.filter(field => paymentData[field] === undefined || paymentData[field] === null);
+        if (missingFields.length > 0) {
+            throw new Error(`Faltan campos obligatorios: ${missingFields.join(', ')}`);
+        }
+
+        // Validar formato de fecha
+        const dateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+        if (!dateRegex.test(paymentData.paymentDate)) {
+            throw new Error('Formato de fecha inválido. Debe ser yyyy-MM-ddThh:mm:ss');
+        }
+
+        // Validar y normalizar el método de pago
+        if (!paymentData.paymentMethod || typeof paymentData.paymentMethod !== 'string' || paymentData.paymentMethod.trim() === '') {
+            throw new Error('El método de pago es obligatorio y debe ser un string no vacío. Ejemplo: Webpay, Paypal, Ebanx, Stripe, etc.');
+        }
+
+        // Validar tipo de tarjeta si se proporciona
+        if (paymentData.cardType) {
+            const validCardTypes = ['VISA', 'MASTERCARD', 'AMERICAN EXPRESS', 'DINNERS CLUB', 'REDCOMPRA'];
+            if (!validCardTypes.includes(paymentData.cardType.toUpperCase())) {
+                throw new Error(`Tipo de tarjeta inválido. Debe ser uno de: ${validCardTypes.join(', ')}`);
+            }
+        }
+
+        // Validar número de tarjeta si se proporciona
+        if (paymentData.cardNumber) {
+            const cardNumberRegex = /^\d{4}$/;
+            if (!cardNumberRegex.test(paymentData.cardNumber)) {
+                throw new Error('El número de tarjeta debe ser los últimos 4 dígitos');
+            }
+        }
+
+        // Obtener token
+        const token = await this.getToken();
+        const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+        };
+
+        // Preparar datos del pago según la documentación
+        const paymentPayload = {
+            idBooking: String(paymentData.idBooking),
+            totalAmount: parseFloat(Number(paymentData.totalAmount).toFixed(1)),
+            hasAdvancePayment: Boolean(paymentData.hasAdvancePayment),
+            paymentDate: paymentData.paymentDate,
+            currency: paymentData.currency || 'CLP',
+            cardType: paymentData.cardType ? paymentData.cardType.toUpperCase() : null,
+            cardNumber: paymentData.cardNumber ? String(paymentData.cardNumber) : null,
+            authorizationTransactionId: String(paymentData.authorizationTransactionId),
+            paymentMethod: paymentData.paymentMethod,
+            idOrderNumber: String(paymentData.idOrderNumber),
+            couponCode: paymentData.couponCode || null
+        };
+
+        console.log('\n💳 [OzyTrip] Iniciando proceso de pago...');
+        console.log('📝 [OzyTrip] Parámetros de entrada:', {
+            ...paymentPayload,
+            totalAmount: `${paymentPayload.totalAmount} (${typeof paymentPayload.totalAmount})`
+        });
+
+        const url = (process.env.NODE_ENV === 'production' ? 'https://api.bmore.cl:8443' : 'https://api.dev.bmore.cl:8443') + '/api/v1/pay';
+        
         try {
-            console.log('\n💳 [OzyTrip] Iniciando proceso de pago...');
-            console.log('📝 [OzyTrip] Parámetros de entrada:', JSON.stringify(data, null, 2));
-
-            // Validar campos obligatorios
-            const requiredFields = [
-                'idBooking',
-                'totalAmount',
-                'paymentDate',
-                'authorizationTransactionId',
-                'paymentMethod',
-                'idOrderNumber'
-            ];
-
-            console.log('\n🔍 [OzyTrip] Validando campos obligatorios...');
-            const missingFields = requiredFields.filter(field => !data[field]);
-            if (missingFields.length > 0) {
-                console.error('❌ [OzyTrip] Campos obligatorios faltantes:', missingFields);
-                throw new Error(`Campos obligatorios faltantes: ${missingFields.join(', ')}`);
-            }
-            console.log('✅ [OzyTrip] Campos obligatorios validados');
-
-            // Validar formato de fecha
-            console.log('\n🔍 [OzyTrip] Validando formato de fecha...');
-            const dateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
-            if (!dateRegex.test(data.paymentDate)) {
-                console.error('❌ [OzyTrip] Formato de fecha inválido:', data.paymentDate);
-                throw new Error('Formato de fecha inválido. Debe ser yyyy-MM-ddThh:mm:ss');
-            }
-            console.log('✅ [OzyTrip] Formato de fecha válido');
-
-            // Validar monto total
-            if (typeof data.totalAmount !== 'number' || data.totalAmount <= 0) {
-                console.error('❌ [OzyTrip] Monto total inválido:', data.totalAmount);
-                throw new Error('El monto total debe ser un número positivo');
+            const response = await axios.post(url, paymentPayload, { headers });
+            
+            if (response.status !== 200 || !response.data) {
+                throw new Error('No se recibió una respuesta válida del servidor (pay)');
             }
 
-            // Obtener token
-            console.log('\n🔑 [OzyTrip] Obteniendo token...');
-            const token = await this.getToken();
-            if (!token) {
-                throw new Error('No se pudo obtener el token de autenticación');
-            }
-            console.log('✅ [OzyTrip] Token obtenido exitosamente');
-
-            // Preparar la petición
-            const url = `${this.apiUrl}/api/v1/pay`;
-            console.log('\n🌐 [OzyTrip] URL de la petición:', url);
-            console.log('📤 [OzyTrip] Enviando petición al servidor con headers:', {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer [TOKEN]',
-                'Accept': 'application/json'
+            return response.data;
+        } catch (error) {
+            console.error('\n❌ [OzyTrip] Error en el proceso de pago:', {
+                message: error.message,
+                response: error.response?.data || 'No hay datos de respuesta',
+                payload: paymentPayload
             });
+            
+            if (error.response?.data) {
+                throw new Error(`Error en el proceso de pago: ${error.response.data.message || error.message}`);
+            }
+            throw error;
+        }
+    }
 
-            // Realizar la petición
-            const response = await axios.post(url, data, {
+    /**
+     * Consulta el precio final (con descuentos) usando el endpoint /api/v1/rater
+     * @param {Object} params
+     * @param {string} params.idBooking - ID de la reserva
+     * @param {string} [params.paymentMethod] - Método de pago (opcional)
+     * @param {string} [params.couponCode] - Cupón (opcional)
+     * @param {string} [params.currency] - Moneda (opcional)
+     * @returns {Promise<Object>} Respuesta de la API con totalAmount y detalles
+     */
+    async getRater({ idBooking, paymentMethod = null, couponCode = null, currency = null }) {
+        if (!idBooking) throw new Error('idBooking es obligatorio para consultar el rater');
+        const token = await this.getToken();
+        const url = `${this.apiUrl}/api/v1/rater`;
+        const payload = {
+            idBooking,
+            paymentMethod,
+            couponCode,
+            currency
+        };
+        try {
+            const response = await axios.post(url, payload, {
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`,
                     'Accept': 'application/json'
                 }
             });
-
-            console.log('\n✅ [OzyTrip] Respuesta recibida del servidor:', {
-                status: response.status,
-                statusText: response.statusText,
-                hasData: !!response.data,
-                headers: response.headers
-            });
-
-            if (response.status === 200) {
-                console.log('✅ [OzyTrip] Pago procesado exitosamente');
-                return response.data || { 
-                    idBooking: data.idBooking, 
-                    status: 'success',
-                    paymentDate: data.paymentDate,
-                    totalAmount: data.totalAmount
-                };
-            } else {
-                throw new Error('No se recibió una respuesta válida del servidor');
-            }
-
+            if (!response.data) throw new Error('Respuesta vacía de /rater');
+            return response.data;
         } catch (error) {
-            console.error('\n❌ [OzyTrip] Error al procesar el pago:', {
-                message: error.message,
-                code: error.code,
-                response: error.response?.data || 'No hay datos de respuesta'
-            });
-
-            if (error.response?.data) {
-                throw new Error(`Error al procesar el pago: ${error.response.data.message || error.message}`);
-            }
-            throw error;
+            console.error('❌ [OzyTrip] Error en getRater:', error.response?.data || error.message);
+            throw new Error(`Error al consultar rater: ${error.response?.data?.message || error.message}`);
         }
     }
 }

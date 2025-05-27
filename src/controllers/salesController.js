@@ -177,7 +177,7 @@ export const createSale = async (req, res) => {
         });
       }
 
-      // Buscar la fecha específica solicitada
+      // Buscar la fecha y horario específico solicitado
       const requestedDate = tourInfo.dates.find(d => d.date === custommer.date);
       if (!requestedDate) {
         return res.status(400).json({
@@ -191,32 +191,43 @@ export const createSale = async (req, res) => {
         });
       }
 
-      // Verificar si hay cupos disponibles
-      const hasAvailableQuota = requestedDate.quotas.some(q => q.availableQuota > 0);
-      if (!hasAvailableQuota) {
+      // Buscar el horario solicitado usando la hora del JSON de entrada
+      const requestedTime = requestedDate.quotas.find(q => q.startTime === custommer.time);
+      if (!requestedTime) {
         return res.status(400).json({
-          message: 'No hay cupos disponibles para la fecha seleccionada',
-          error: 'NO_QUOTA_AVAILABLE',
+          message: 'El horario solicitado no está disponible',
+          error: 'TIME_NOT_AVAILABLE',
           details: {
             tourCode: custommer.itemsCart[0].idItemEcommerce,
             date: custommer.date,
-            quotas: requestedDate.quotas
+            startTime: custommer.time,
+            availableTimes: requestedDate.quotas.map(q => q.startTime)
           }
         });
       }
 
-      // Validar que la cantidad de pasajeros no exceda los cupos disponibles
-      const maxAvailableQuota = Math.max(...requestedDate.quotas.map(q => q.availableQuota));
-      if (custommer.qtypax > maxAvailableQuota) {
+      // Calcular la cantidad total de pasajeros a reservar
+      let totalPax = 0;
+      if (tourInfo.priceHeaders && tourInfo.priceHeaders.length > 0) {
+        const prices = tourInfo.priceHeaders[0].prices;
+        totalPax = prices.reduce((sum, price) => {
+          return sum + (price.ageGroupCode === 'ADT' ? custommer.qtypax : 0);
+        }, 0);
+      } else {
+        totalPax = custommer.qtypax;
+      }
+
+      // Validar que la cantidad de pasajeros no exceda los cupos disponibles para el horario
+      if (totalPax > requestedTime.availableQuota) {
         return res.status(400).json({
-          message: `La cantidad de pasajeros (${custommer.qtypax}) excede los cupos disponibles (${maxAvailableQuota})`,
+          message: `La cantidad de pasajeros (${totalPax}) excede los cupos disponibles para el horario seleccionado (${requestedTime.availableQuota})`,
           error: 'EXCEEDS_AVAILABLE_QUOTA',
           details: {
             tourCode: custommer.itemsCart[0].idItemEcommerce,
             date: custommer.date,
-            requestedPax: custommer.qtypax,
-            availableQuota: maxAvailableQuota,
-            quotas: requestedDate.quotas
+            startTime: custommer.time,
+            requestedPax: totalPax,
+            availableQuota: requestedTime.availableQuota
           }
         });
       }
@@ -232,8 +243,8 @@ export const createSale = async (req, res) => {
         informationRequired: tourInfo.informationRequiredDescription
       });
       
-      // Usar la hora de inicio del tour obtenida en tourInfo
-      const tourStartTime = tourInfo.startTime; // Formato completo HH:mm:ss
+      // Usar la hora de inicio seleccionada por el usuario
+      const tourStartTime = custommer.time; // Usar la hora del JSON de entrada
       console.log('⏰ [OzyTrip] Usando hora de inicio del tour:', {
         completo: tourStartTime
       });
@@ -245,7 +256,7 @@ export const createSale = async (req, res) => {
         idBooking: null, // Opcional, si no viene se asume que es el primer ítem
         tourCode: tourInfo.tourCode, // Usar el tourCode de la información del tour
         serviceDate: `${custommer.date}T${tourStartTime}`,
-        startTime: tourStartTime, // Usar el formato completo HH:mm:ss
+        startTime: tourStartTime, // Usar la hora seleccionada
         meetingPointId: null,
         pickupLocationId: null,
         ageGroups: []
@@ -321,15 +332,20 @@ export const createSale = async (req, res) => {
         
         // Si tenemos idBooking, procedemos con el pago
         if (addPassengersResponse && addPassengersResponse.idBooking) {
-          // Calcular el total real basado en el precio del tour
-          const tourPrice = ozyTripResponse.tourInfo.priceHeaders[0].prices.find(p => p.ageGroupCode === 'ADT').unitPrice;
-          const totalAmount = tourPrice * custommer.qtypax;
+          // Consultar el monto final a pagar usando /rater
+          console.log('\n🔎 [OzyTrip] Consultando monto final a pagar en /rater...');
+          let raterResponse;
+          try {
+            raterResponse = await ozyTripService.getRater({ idBooking: addPassengersResponse.idBooking });
+            console.log('✅ [OzyTrip] Respuesta de /rater:', JSON.stringify(raterResponse, null, 2));
+          } catch (raterError) {
+            console.error('❌ [OzyTrip] Error al consultar /rater:', raterError);
+            throw new Error('No se pudo obtener el monto final a pagar desde /rater');
+          }
 
-          console.log('\n💰 [OzyTrip] Cálculo del total:', {
-            precioUnitario: tourPrice,
-            cantidadPasajeros: custommer.qtypax,
-            totalCalculado: totalAmount
-          });
+          // Usar el totalAmount de /rater para el pago
+          const totalAmount = raterResponse.totalAmount;
+          console.log('💰 [OzyTrip] Monto final a pagar (totalAmount de /rater):', totalAmount, typeof totalAmount);
 
           // Formatear la fecha sin milisegundos y en formato local
           const now = new Date();
@@ -339,41 +355,48 @@ export const createSale = async (req, res) => {
           const paymentData = {
             // Campos obligatorios
             idBooking: addPassengersResponse.idBooking,
-            totalAmount: totalAmount,
-            hasAdvancePayment: false, // Por defecto false, debe coincidir con startPayment
-            paymentDate: paymentDate, // Formato yyyy-MM-ddThh:mm:ss
+            totalAmount: totalAmount, // Usar el valor de /rater
+            hasAdvancePayment: false,
+            paymentDate: paymentDate,
             authorizationTransactionId: custommer.idSaleProvider,
-            paymentMethod: 'WEBPAY', // Medio de pago (Webpay, Paypal, Ebanx, Stripe, etc)
+            paymentMethod: 'WEBPAY',
             idOrderNumber: custommer.idSaleProvider,
 
             // Campos opcionales con valores por defecto
-            currency: 'CLP', // Por defecto CLP si no se especifica
-            cardType: null, // Opcional: VISA, MASTERCARD, AMERICAN EXPRESS, DINNERS CLUB, REDCOMPRA
-            cardNumber: null, // Opcional: últimos 4 dígitos de la tarjeta
-            couponCode: null // Opcional: código de cupón si se utiliza
+            currency: 'CLP',
+            cardType: null,
+            cardNumber: null,
+            couponCode: null
           };
 
           console.log('\n💳 [OzyTrip] Iniciando proceso de pago...');
-          console.log('📦 [OzyTrip] Datos del pago (según documentación):', {
-            // Campos obligatorios
-            idBooking: paymentData.idBooking,
-            totalAmount: paymentData.totalAmount,
-            hasAdvancePayment: paymentData.hasAdvancePayment,
-            paymentDate: paymentData.paymentDate,
-            authorizationTransactionId: paymentData.authorizationTransactionId,
-            paymentMethod: paymentData.paymentMethod,
-            idOrderNumber: paymentData.idOrderNumber,
-            
-            // Campos opcionales
-            currency: paymentData.currency,
-            cardType: paymentData.cardType,
-            cardNumber: paymentData.cardNumber,
-            couponCode: paymentData.couponCode
-          });
+          console.log('📦 [OzyTrip] Datos del pago (según documentación):', paymentData);
 
           try {
             const paymentResponse = await ozyTripService.pay(paymentData);
             console.log('✅ [OzyTrip] Respuesta del pago:', JSON.stringify(paymentResponse, null, 2));
+
+            // Actualizar la venta con los códigos de OzyTrip
+            const updatedSale = await prisma.sale.update({
+              where: {
+                idSaleProvider: custommer.idSaleProvider
+              },
+              data: {
+                ozyTripIdBooking: paymentResponse.idBooking,
+                ozyTripSalesCode: paymentResponse.salesCode,
+                ozyTripBalance: paymentResponse.balance,
+                ozyTripHasAdvancePayment: paymentResponse.hasAdvancePayment,
+                Status: 'CONFIRMED',
+                UpdatedAt: new Date()
+              }
+            });
+
+            console.log('✅ [DB] Venta actualizada con códigos OzyTrip:', {
+              idSaleProvider: updatedSale.idSaleProvider,
+              ozyTripIdBooking: updatedSale.ozyTripIdBooking,
+              ozyTripSalesCode: updatedSale.ozyTripSalesCode,
+              status: updatedSale.Status
+            });
 
             ozyTripResponse = {
               status: 'SUCCESS',
@@ -385,9 +408,9 @@ export const createSale = async (req, res) => {
             };
           } catch (paymentError) {
             console.error('❌ [OzyTrip] Error al procesar el pago:', paymentError);
-            // Si el pago falla pero los pasajeros se agregaron, consideramos parcialmente exitoso
+            // Si el pago falla pero los pasajeros se agregaron, consideramos error total
             ozyTripResponse = {
-              status: 'PARTIAL_SUCCESS',
+              status: 'ERROR',
               timestamp: new Date().toISOString(),
               tourInfo: ozyTripResponse.tourInfo,
               cartResponse: cartResponse,
