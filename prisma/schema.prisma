@@ -1,0 +1,359 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider          = "sqlserver"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+model Sale {
+  Id              Int        @id(map: "PK__Sales__3214EC07D68F4402") @default(autoincrement())
+  ProviderName    String     @db.NVarChar(100)
+  Name            String     @db.NVarChar(100)
+  LastName        String     @db.NVarChar(100)
+  Email           String     @db.NVarChar(255)
+  PhoneNumber     String     @db.NVarChar(20)
+  Country         String     @db.NVarChar(2)
+  City            String     @db.NVarChar(100)
+  Language        String     @db.NVarChar(50)
+  Date            DateTime   @db.Date
+  Time            String     @db.VarChar(8)
+  QtyPax          Int
+  Opt             String     @db.NVarChar(100)
+  Total           Decimal    @db.Decimal(10, 2)
+  CreatedAt       DateTime?  @default(now(), map: "DF__Sales__CreatedAt__5F492382") @db.DateTime
+  UpdatedAt       DateTime?  @default(now(), map: "DF__Sales__UpdatedAt__603D47BB") @updatedAt @db.DateTime
+  Status          String?    @default("PROCESSING", map: "DF__Sales__Status__61316BF4") @db.NVarChar(20)
+  idSaleProvider  String     @unique(map: "UQ_Sales_idSaleProvider") @db.NVarChar(100)
+  CancelReason    String?    @db.NVarChar(500)
+  secureId        String?    @db.NVarChar(50)
+  ozyTripResponse String?    @db.Text
+  ozyTripIdBooking String?   @db.NVarChar(100)
+  ozyTripSalesCode String?   @db.NVarChar(100)
+  ozyTripBalance  Decimal?   @db.Decimal(10, 2)
+  ozyTripHasAdvancePayment Boolean? @default(false)
+  CartItems       CartItem[]
+  Cart            Cart?
+
+  @@index([Email], map: "IX_Sales_Email")
+  @@index([Status], map: "IX_Sales_Status")
+  @@index([idSaleProvider], map: "IX_Sales_idSaleProvider")
+  @@index([ozyTripIdBooking], map: "IX_Sales_ozyTripIdBooking")
+  @@index([ozyTripSalesCode], map: "IX_Sales_ozyTripSalesCode")
+  @@map("Sales")
+}
+
+model CartItem {
+  id              Int       @id @default(autoincrement())
+  cartId          String
+  idItemEcommerce String    @db.NVarChar(100)
+  ageGroupCode    String    @db.NVarChar(10)
+  quantity        Int
+  tourCode        String    @db.NVarChar(100)
+  serviceDate     DateTime
+  startTime       String    @db.VarChar(8)
+  meetingPointId  Int?
+  pickupLocationId String?  @db.NVarChar(36)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  status          String    @default("ACTIVE") @db.NVarChar(20)
+  Cart            Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  Sale            Sale?     @relation(fields: [SaleId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  SaleId          Int?
+
+  @@index([cartId])
+  @@index([idItemEcommerce])
+  @@index([status])
+  @@index([SaleId])
+  @@map("CartItems")
+}
+
+model Agencia {
+  id                 String   @id
+  nombre             String
+  email              String   @unique
+  telefono           String
+  rut                String   @unique
+  porcentajeComision Float
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime
+  status             Boolean  @default(true)
+  Venta              Venta[]
+
+  @@index([rut])
+}
+
+model cash_reconciliations {
+  id            String   @id
+  paymentType   String
+  countTrx      Int
+  total         Float
+  change        Float
+  totalSquar    Float
+  totalCash     Float
+  vendedorId    String
+  justification String?
+  fecha         DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+}
+
+model DatosArriendo {
+  id            String   @id
+  fechaArriendo DateTime
+  fechaEntrega  DateTime
+  patente       String
+  ventaId       String   @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+  Venta         Venta    @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+}
+
+model DetalleVenta {
+  id                 String         @id
+  detailId           Int
+  productId          String
+  productDescription String
+  unitPrice          Float
+  quantity           Int
+  totalPrice         Float
+  cantidadDevuelta   Int?
+  estadoProducto     String?
+  observacion        String?
+  ventaId            String
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime
+  detalleOriginalId  String?
+  DetalleVenta       DetalleVenta?  @relation("DetalleVentaToDetalleVenta", fields: [detalleOriginalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_DetalleVenta DetalleVenta[] @relation("DetalleVentaToDetalleVenta")
+  Product            Product        @relation(fields: [productId], references: [id], onUpdate: NoAction)
+  Venta              Venta          @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+
+  @@unique([ventaId, detailId])
+  @@index([detalleOriginalId])
+  @@index([productId])
+}
+
+model Guia {
+  id                 String   @id
+  nombre             String
+  email              String   @unique
+  telefono           String
+  dni                String   @unique
+  porcentajeComision Float
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime
+  status             Boolean  @default(true)
+  Venta              Venta[]
+
+  @@index([dni])
+}
+
+model LoginAttempt {
+  id           Int       @id @default(autoincrement())
+  ip           String
+  email        String
+  attempts     Int       @default(0)
+  blockedUntil DateTime?
+  lastAttempt  DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
+  userId       String
+  User         User      @relation(fields: [userId], references: [id], onUpdate: NoAction)
+
+  @@unique([ip, email])
+  @@index([email])
+  @@index([ip])
+  @@index([userId])
+}
+
+model Product {
+  id           String         @id
+  name         String         @unique
+  description  String
+  type         String
+  priceUSD     Float
+  priceCLP     Float
+  priceBRL     Float
+  stock        Int
+  imageUrl     String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  status       Boolean        @default(true)
+  DetalleVenta DetalleVenta[]
+}
+
+model User {
+  id           String         @id
+  email        String         @unique
+  password     String
+  name         String
+  role         String         @default("USER")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  status       Boolean        @default(true)
+  LoginAttempt LoginAttempt[]
+}
+
+model Venta {
+  id                 String             @id
+  saleId             Int                @unique
+  transactionType    String
+  estadoVenta        String             @default("Finalizada")
+  fecha              DateTime           @default(now())
+  moneyType          String
+  paymentType        String
+  total              Float
+  paid               Float
+  change             Float
+  dni                String
+  name               String
+  email              String
+  phoneNumber        String
+  patent             String?
+  cashier            String
+  idVendedor         String
+  idGuia             String?
+  idAgencia          String?
+  comisionGuia       Float?
+  comisionAgencia    Float?
+  idVentaRelacionada Int?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime
+  DatosArriendo      DatosArriendo?
+  DetalleVenta       DetalleVenta[]
+  Agencia            Agencia?           @relation(fields: [idAgencia], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Guia               Guia?              @relation(fields: [idGuia], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Venta              Venta?             @relation("VentaToVenta", fields: [idVentaRelacionada], references: [saleId], onDelete: NoAction, onUpdate: NoAction)
+  other_Venta        Venta[]            @relation("VentaToVenta")
+  VentaPagoAgencia   VentaPagoAgencia[]
+  VentaPagoGuia      VentaPagoGuia[]
+
+  @@index([dni])
+  @@index([fecha])
+  @@index([idAgencia])
+  @@index([idGuia])
+  @@index([idVendedor])
+}
+
+model VentaPagoAgencia {
+  id      Int    @id @default(autoincrement())
+  monto   Float
+  ventaId String
+  Venta   Venta  @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+}
+
+model VentaPagoGuia {
+  id      Int    @id @default(autoincrement())
+  monto   Float
+  ventaId String
+  Venta   Venta  @relation(fields: [ventaId], references: [id], onUpdate: NoAction)
+}
+
+model IDO {
+  id                                                Int       @id(map: "PK__IDO__3213E83F32ED4D27") @default(autoincrement())
+  cod                                               String?   @db.VarChar(50)
+  fecha                                             DateTime? @default(dbgenerated("CONVERT([date],getdate())"), map: "DF__IDO__fecha__7EC1CEDB") @db.Date
+  observaciones                                     String?   @db.Text
+  hora_inicio_OC                                    String?   @db.VarChar(10)
+  hora_termino_OC_real                              String?   @db.VarChar(10)
+  tiempo_total_OC                                   String?   @db.VarChar(10)
+  cierre_programado                                 String?   @db.VarChar(10)
+  apertura_programada                               String?   @db.VarChar(10)
+  tiempo_OP_programado                              String?   @db.VarChar(10)
+  cantidad_detenciones                              Int?
+  tiempo_total_detenciones                          String?   @db.VarChar(10)
+  capacidad_ofrecida_pax                            Int?
+  indice_cumplimiento_operativo                     Float?
+  total_vueltas                                     Int?
+  tiempo_total_op_sd                                String?   @db.VarChar(10)
+  indice_ocupacion                                  Float?
+  disponibilidad_tecnica                            Float?
+  estado_linea                                      Boolean?
+  estado_generador                                  Boolean?
+  estado_motor_ppal                                 Boolean?
+  estado_motor_emergencia                           Boolean?
+  cabinas_en_linea                                  Int?
+  horometro_motor_principal                         Float?
+  horometro_motor_socorro                           Float?
+  estado_suministro_oasis                           Boolean?
+  estado_suministro_tupahue                         Boolean?
+  estado_suministro_cumbre                          Boolean?
+  tickets_generados                                 Int?
+  visitantes_transportados                          Int?
+  vel_max_viento_ms                                 Float?
+  temperatura_min                                   Float?
+  temperatura_max                                   Float?
+  condicion                                         String?   @db.VarChar(100)
+  humedad_min                                       Float?
+  humedad_max                                       Float?
+  responsable_turno                                 Int?
+  jefe_sistema_operativo                            Int?
+  conductora_oasis                                  Int?
+  operador_cumbre                                   Int?
+  operador_tupahue                                  Int?
+  mecanico_turno                                    Int?
+  jefe_mantenimiento_operacion                      Int?
+  ingeniero_operativo                               Int?
+  relevo_colacion_oasis                             Int?
+  relevo_colacion_cumbre                            Int?
+  relevo_colacion_tupahue                           Int?
+  electrico_turno                                   Int?
+  createdAt                                         DateTime? @db.DateTime
+  driverUpdatedAt                                   DateTime? @db.DateTime
+  operatorUpdatedAt                                 DateTime? @db.DateTime
+  Workers_IDO_conductora_oasisToWorkers             Workers?  @relation("IDO_conductora_oasisToWorkers", fields: [conductora_oasis], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__conductora___019E3B86")
+  Workers_IDO_electrico_turnoToWorkers              Workers?  @relation("IDO_electrico_turnoToWorkers", fields: [electrico_turno], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__electrico_t__0A338187")
+  Workers_IDO_ingeniero_operativoToWorkers          Workers?  @relation("IDO_ingeniero_operativoToWorkers", fields: [ingeniero_operativo], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__ingeniero_o__0662F0A3")
+  Workers_IDO_jefe_mantenimiento_operacionToWorkers Workers?  @relation("IDO_jefe_mantenimiento_operacionToWorkers", fields: [jefe_mantenimiento_operacion], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__jefe_manten__056ECC6A")
+  Workers_IDO_jefe_sistema_operativoToWorkers       Workers?  @relation("IDO_jefe_sistema_operativoToWorkers", fields: [jefe_sistema_operativo], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__jefe_sistem__00AA174D")
+  Workers_IDO_mecanico_turnoToWorkers               Workers?  @relation("IDO_mecanico_turnoToWorkers", fields: [mecanico_turno], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__mecanico_tu__047AA831")
+  Workers_IDO_operador_cumbreToWorkers              Workers?  @relation("IDO_operador_cumbreToWorkers", fields: [operador_cumbre], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__operador_cu__02925FBF")
+  Workers_IDO_operador_tupahueToWorkers             Workers?  @relation("IDO_operador_tupahueToWorkers", fields: [operador_tupahue], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__operador_tu__038683F8")
+  Workers_IDO_relevo_colacion_oasisToWorkers        Workers?  @relation("IDO_relevo_colacion_oasisToWorkers", fields: [relevo_colacion_oasis], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__relevo_cola__075714DC")
+  Workers_IDO_relevo_colacion_cumbreToWorkers       Workers?  @relation("IDO_relevo_colacion_cumbreToWorkers", fields: [relevo_colacion_cumbre], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__relevo_cola__084B3915")
+  Workers_IDO_relevo_colacion_tupahueToWorkers      Workers?  @relation("IDO_relevo_colacion_tupahueToWorkers", fields: [relevo_colacion_tupahue], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__relevo_cola__093F5D4E")
+  Workers_IDO_responsable_turnoToWorkers            Workers?  @relation("IDO_responsable_turnoToWorkers", fields: [responsable_turno], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK__IDO__responsable__7FB5F314")
+}
+
+model Workers {
+  id                                            Int      @id(map: "PK__Workers__3213E83F72C8DFB2") @default(autoincrement())
+  name                                          String   @db.NVarChar(255)
+  type                                          String   @db.NVarChar(255)
+  createdAt                                     DateTime @default(dbgenerated("sysdatetime()"), map: "DF__Workers__created__6CA31EA0")
+  updatedAt                                     DateTime @default(dbgenerated("sysdatetime()"), map: "DF__Workers__updated__6D9742D9")
+  status                                        Int?
+  IDO_IDO_conductora_oasisToWorkers             IDO[]    @relation("IDO_conductora_oasisToWorkers")
+  IDO_IDO_electrico_turnoToWorkers              IDO[]    @relation("IDO_electrico_turnoToWorkers")
+  IDO_IDO_ingeniero_operativoToWorkers          IDO[]    @relation("IDO_ingeniero_operativoToWorkers")
+  IDO_IDO_jefe_mantenimiento_operacionToWorkers IDO[]    @relation("IDO_jefe_mantenimiento_operacionToWorkers")
+  IDO_IDO_jefe_sistema_operativoToWorkers       IDO[]    @relation("IDO_jefe_sistema_operativoToWorkers")
+  IDO_IDO_mecanico_turnoToWorkers               IDO[]    @relation("IDO_mecanico_turnoToWorkers")
+  IDO_IDO_operador_cumbreToWorkers              IDO[]    @relation("IDO_operador_cumbreToWorkers")
+  IDO_IDO_operador_tupahueToWorkers             IDO[]    @relation("IDO_operador_tupahueToWorkers")
+  IDO_IDO_relevo_colacion_oasisToWorkers        IDO[]    @relation("IDO_relevo_colacion_oasisToWorkers")
+  IDO_IDO_relevo_colacion_cumbreToWorkers       IDO[]    @relation("IDO_relevo_colacion_cumbreToWorkers")
+  IDO_IDO_relevo_colacion_tupahueToWorkers      IDO[]    @relation("IDO_relevo_colacion_tupahueToWorkers")
+  IDO_IDO_responsable_turnoToWorkers            IDO[]    @relation("IDO_responsable_turnoToWorkers")
+}
+
+model Cart {
+  id                    String    @id @default(uuid())
+  idBooking            String?   @unique @db.NVarChar(100)
+  bookingExpirationDate DateTime
+  waitTime             Int
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  status               String    @default("ACTIVE") @db.NVarChar(20)
+  CartItems            CartItem[]
+  Sale                 Sale?     @relation(fields: [saleId], references: [Id])
+  saleId               Int?      @unique
+
+  @@index([idBooking])
+  @@index([status])
+  @@map("Carts")
+}
